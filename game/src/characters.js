@@ -1,6 +1,7 @@
-// Procedural people: every figure is boxes and spheres built in code, with
-// swinging limbs for the walk cycle and a punch pose for combat. Mara,
-// officers, guards and pedestrians share one rig with different palettes.
+// Procedural people. Every figure is boxes and spheres assembled in
+// code, with limbs that pivot at the hip and shoulder so the walk
+// cycle and the punch both read. Mara, officers, guards and passers-by
+// share one rig and differ only in palette and headgear.
 
 import * as THREE from 'three';
 
@@ -28,7 +29,6 @@ export function makeFigure(opts = {}) {
   const hair = opts.hair ?? pick(HAIRS);
 
   const group = new THREE.Group();
-  // Legs pivot at the hip so the walk swing looks right.
   const legL = new THREE.Group();
   const legR = new THREE.Group();
   legL.position.set(-0.14, 0.82, 0);
@@ -41,7 +41,8 @@ export function makeFigure(opts = {}) {
   armR.position.set(0.36, 1.42, 0);
   armL.add(box(0.16, 0.62, 0.2, shirt, 0, -0.28, 0));
   armR.add(box(0.16, 0.62, 0.2, shirt, 0, -0.28, 0));
-  // Skin hands at the end of each arm.
+  // Skin hands cap each sleeve, so a raised arm reads as a hand
+  // reaching, not a bare box ending mid-air.
   armL.add(box(0.15, 0.14, 0.17, skin, 0, -0.62, 0));
   armR.add(box(0.15, 0.14, 0.17, skin, 0, -0.62, 0));
   const torso = box(0.56, 0.66, 0.32, shirt, 0, 1.15, 0);
@@ -80,10 +81,9 @@ export function makeFigure(opts = {}) {
     group.add(badge);
   }
 
-  // Optional pistol in the right hand, hidden until combat needs it.
+  // A pistol held in the right hand, kept hidden until combat shows it.
   const gun = new THREE.Group();
-  const gunBody = box(0.07, 0.09, 0.3, 0x1a1a1a, 0, 0, 0.1);
-  gun.add(gunBody);
+  gun.add(box(0.07, 0.09, 0.3, 0x1a1a1a, 0, 0, 0.1));
   gun.position.set(0, -0.68, 0.05);
   gun.visible = false;
   armR.add(gun);
@@ -132,7 +132,7 @@ export function makeGuard() {
   return makeFigure({ shirt: 0x222831, pants: 0x111111, skin: 0xc68642 });
 }
 
-// Dario's driver contact waiting at the pier: bright jacket, easy to spot.
+// Dario's pier contact: yellow jacket and cap, unmissable at a distance.
 export function makeContact() {
   return makeFigure({ skin: 0x8d5524, shirt: 0xe0a526, pants: 0x334155, hair: 0xb9b9b9, hat: 'cap', hatColor: 0xe0a526 });
 }

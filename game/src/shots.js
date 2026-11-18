@@ -1,7 +1,7 @@
 // Screenshot staging: the ?shot= presets drive the real game systems
 // (missions, wanted level, police, driving) into photogenic states, so
-// captured images are honest renders of gameplay. After a set number of
-// rendered frames the page sets window.__SHOT_READY__ for the capture.
+// every captured image is an honest render of gameplay. After a set
+// number of rendered frames the page sets window.__SHOT_READY__.
 
 import { G } from './state.js';
 import { setWanted, forceSpawnPolice } from './police.js';
@@ -46,7 +46,7 @@ export function applyShotPreset(name) {
     G.cameraDist = 8;
   } else if (name === 'street') {
     // On foot at a busy intersection, looking down the street: traffic
-    // rolling toward camera, pedestrians on the corner, storefronts.
+    // rolling toward the camera, pedestrians on the corner, storefronts.
     city.setTimeOfDay('dusk');
     debugSetMission(0, 0);
     setWanted(0);
@@ -54,8 +54,6 @@ export function applyShotPreset(name) {
     G.cameraYaw = Math.PI;
     G.cameraPitch = 0.3;
     G.cameraDist = 7;
-    // Stage a taxi rolling down the road toward the camera and peds
-    // waiting on the sidewalk corner ahead.
     const taxi = G.cars.find((c) => c.defKey === 'taxi' && c.driver === 'traffic');
     if (taxi) {
       taxi.mesh.position.set(-33, 0, 58);
@@ -75,10 +73,10 @@ export function applyShotPreset(name) {
       moved++;
     }
   } else if (name === 'mission') {
-    // Mara approaches the contact from the south along the shore road,
-    // so the frame holds the contact, the beacon, the pier and the city
-    // edge together instead of empty sea. Camera behind Mara, looking
-    // north toward the contact.
+    // Mara walks up to the contact from the south along the shore road:
+    // the frame holds the contact, the beacon, the pier and the city
+    // edge together. Keep ~9 units back — closer than ~7 trips the
+    // proximity trigger, advances the stage and hides the contact.
     city.setTimeOfDay('dusk');
     debugSetMission(2, 1);
     setWanted(0);
@@ -107,7 +105,6 @@ export function applyShotPreset(name) {
   G.shotMode = name;
   G.shotFrames = 0;
   G.shotReady = false;
-  // Presets always start from a clean, readable HUD state.
   G.health = G.maxHealth;
   G.ammo = 24;
 }

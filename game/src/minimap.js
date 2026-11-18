@@ -1,12 +1,14 @@
-// Live minimap: roads, water, blocks, the player arrow, traffic dots,
-// police strobes, and the objective marker clamped to the edge with a
-// direction wedge so the goal is never lost off-screen. Zoom eases out
-// with speed so fast driving still reads.
+// The live minimap: roads, water and blocks, the player arrow,
+// traffic dots, police strobes, shops and pickups, and the objective
+// marker clamped to the edge with a direction wedge so the goal is
+// never lost off-screen. The zoom eases out with speed, so fast
+// driving still reads at a glance.
 
 import { G, WORLD_HALF, ROAD_LINES, ROAD_WIDTH, SHORE_X } from './state.js';
 import { clamp } from './util.js';
 
 let zoom = 120;
+void WORLD_HALF;
 
 export function drawMinimap(canvas) {
   const ctx = canvas.getContext('2d');
@@ -16,26 +18,24 @@ export function drawMinimap(canvas) {
   if (!player) return;
   const p = player.pos();
   const speed = player.inCar ? Math.abs(player.inCar.speed) : player.walkSpeed;
+  // The zoom eases toward its speed target instead of snapping, so
+  // accelerating never makes the map jump under the player's eyes.
   const targetZoom = 105 + clamp(speed * 3.2, 0, 75);
   zoom += (targetZoom - zoom) * 0.05;
-  const half = zoom; // world units visible from centre to edge
+  const half = zoom;
   const scale = (W / 2) / half;
   const toX = (x) => W / 2 + (x - p.x) * scale;
   const toY = (z) => H / 2 + (z - p.z) * scale;
 
-  // Base: dark blocks.
   ctx.fillStyle = '#20262e';
   ctx.fillRect(0, 0, W, H);
-  // Water to the east.
   if (toX(SHORE_X) < W) {
     ctx.fillStyle = '#1e6f8e';
     ctx.fillRect(Math.max(0, toX(SHORE_X)), 0, W, H);
   }
-  // Beach strip.
   ctx.fillStyle = '#8a7a5a';
   const beachX = toX(SHORE_X - 20);
   if (beachX < W && beachX + 20 * scale > 0) ctx.fillRect(beachX, 0, 20 * scale, H);
-  // Roads.
   ctx.fillStyle = '#4a5058';
   for (const line of ROAD_LINES) {
     const y = toY(line);
@@ -43,7 +43,6 @@ export function drawMinimap(canvas) {
     const x = toX(line);
     if (x > -20 && x < W + 20) ctx.fillRect(x - (ROAD_WIDTH / 2) * scale, 0, ROAD_WIDTH * scale, H);
   }
-  // Block parks: a hint of green in a few blocks.
   ctx.fillStyle = '#2c4432';
   for (let ix = 0; ix < 3; ix++) {
     for (let iz = 0; iz < 3; iz++) {
@@ -54,7 +53,6 @@ export function drawMinimap(canvas) {
       }
     }
   }
-  // Shops.
   if (G.city) {
     for (const shop of G.city.shops) {
       const x = toX(shop.x);
@@ -66,7 +64,6 @@ export function drawMinimap(canvas) {
       ctx.fill();
     }
   }
-  // Pickups.
   for (const pickup of G.pickups) {
     if (pickup.taken) continue;
     const x = toX(pickup.x);
@@ -75,7 +72,6 @@ export function drawMinimap(canvas) {
     ctx.fillStyle = pickup.kind === 'health' ? '#2ecc71' : '#e0a526';
     ctx.fillRect(x - 2, y - 2, 4, 4);
   }
-  // Traffic: small grey dots. Police: flashing red/blue.
   const flash = Math.floor(G.time * 4) % 2 === 0;
   for (const car of G.cars) {
     const x = toX(car.mesh.position.x);
@@ -96,10 +92,9 @@ export function drawMinimap(canvas) {
       ctx.fill();
     }
   }
-  // Objective: gold diamond, clamped to the edge with a wedge.
   if (G.objectivePos) {
     let ox = toX(G.objectivePos.x);
-    let oy = toY(G.objectivePos.y);
+    let oy = toY(G.objectivePos.z);
     const clamped = ox < 14 || ox > W - 14 || oy < 14 || oy > H - 14;
     ox = clamp(ox, 14, W - 14);
     oy = clamp(oy, 14, H - 14);
@@ -125,10 +120,8 @@ export function drawMinimap(canvas) {
     }
     ctx.restore();
   }
-  // Player arrow, rotated to heading (or car heading).
   const heading = player.inCar ? player.inCar.heading : player.heading;
   drawArrow(ctx, W / 2, H / 2, heading);
-  // North tick + border vignette.
   ctx.fillStyle = 'rgba(255,255,255,0.65)';
   ctx.font = 'bold 10px Trebuchet MS, sans-serif';
   ctx.textAlign = 'center';
@@ -136,7 +129,7 @@ export function drawMinimap(canvas) {
 }
 
 function drawArrow(ctx, cx, cy, heading) {
-  // Screen angle: heading 0 (+z) points down the canvas, PI/2 points right.
+  // Screen angle: heading 0 (+z) points down the canvas, PI/2 right.
   ctx.save();
   ctx.translate(cx, cy);
   ctx.rotate(Math.PI - heading);

@@ -1,6 +1,6 @@
-// Traffic: cars that cruise the grid, brake for the car ahead, pause at
-// intersections, and wrap around the world so the streets never empty.
-// They keep right, drive at modest speeds, and honk when cut off.
+// Traffic: cars cruising the grid on the right side of the road,
+// braking for the car ahead, pausing a beat at intersections, and
+// wrapping around the world edge so the streets never run dry.
 
 import { G, ROAD_LINES, WORLD_HALF } from './state.js';
 import { createCar, moveCar } from './vehicles.js';
@@ -16,7 +16,7 @@ export function spawnTraffic(scene, count, rng) {
     const line = ROAD_LINES[Math.floor(rng() * ROAD_LINES.length)];
     const dir = rng() < 0.5 ? 1 : -1;
     const along = (rng() * 2 - 1) * (WORLD_HALF - 40);
-    const offset = 3.1 * dir; // keep right
+    const offset = 3.1 * dir;
     const x = axis === 'x' ? along : line + offset;
     const z = axis === 'x' ? line + offset : along;
     const heading = axis === 'x' ? (dir > 0 ? Math.PI / 2 : -Math.PI / 2) : (dir > 0 ? 0 : Math.PI);
@@ -45,11 +45,11 @@ export function spawnParked(scene, count, rng, city) {
     const horizontal = rng() < 0.5;
     const x = horizontal ? along : line + side * 5.2;
     const z = horizontal ? line + side * 5.2 : along;
-    // Never park on the pier approach or inside a building.
+    // Never park on the pier approach, inside a building, or on top
+    // of another parked car — the checks below guard all three.
     if (x > 240) continue;
     const res = city.collideCircle(x, z, 2.2);
     if (res.hit) continue;
-    // Keep clear of other parked cars.
     let clear = true;
     for (const other of G.cars) {
       if (Math.hypot(other.mesh.position.x - x, other.mesh.position.z - z) < 7) { clear = false; break; }
@@ -90,7 +90,6 @@ export function updateTraffic(dt, city) {
   for (const car of G.cars) {
     if (car.driver !== 'traffic' || !car.traffic) continue;
     const t = car.traffic;
-    // Cruise speed with gentle variation per car.
     const cruise = 9 + (car.mesh.position.x % 3);
     const ahead = carAhead(car, 14);
     let target = cruise;
@@ -98,7 +97,6 @@ export function updateTraffic(dt, city) {
       const gap = Math.hypot(ahead.mesh.position.x - car.mesh.position.x, ahead.mesh.position.z - car.mesh.position.z);
       target = gap < 7 ? 0 : cruise * clamp((gap - 7) / 7, 0, 1);
     }
-    // Random pause at intersections: a beat, then go.
     car.stuckTimer -= dt;
     const nearCrossing = ROAD_LINES.some((l) => Math.abs((t.axis === 'x' ? car.mesh.position.x : car.mesh.position.z) - l) < 4);
     if (nearCrossing && Math.random() < dt * 0.25 && car.stuckTimer <= 0) {
@@ -107,7 +105,6 @@ export function updateTraffic(dt, city) {
     if (car.stuckTimer > 0) target = 0;
     car.speed += clamp(target - car.speed, -14 * dt, 6 * dt);
     car.speed = Math.max(0, car.speed);
-    // Steer back onto the lane line.
     const lanePos = t.axis === 'x' ? car.mesh.position.z : car.mesh.position.x;
     const wantLane = t.line + 3.1 * t.dir;
     const laneErr = wantLane - lanePos;
@@ -119,7 +116,6 @@ export function updateTraffic(dt, city) {
     while (dh < -Math.PI) dh += Math.PI * 2;
     car.heading += clamp(dh, -1.4 * dt, 1.4 * dt);
     moveCar(car, dt, city, null);
-    // Wrap around the far edge so traffic never runs out.
     const p = car.mesh.position;
     if (t.axis === 'x' && Math.abs(p.x) > WORLD_HALF - 8) {
       p.x = -Math.sign(p.x) * (WORLD_HALF - 12);
@@ -127,7 +123,6 @@ export function updateTraffic(dt, city) {
     if (t.axis === 'z' && Math.abs(p.z) > WORLD_HALF - 8) {
       p.z = -Math.sign(p.z) * (WORLD_HALF - 12);
     }
-    // Far from the player? Teleport a stalled car closer to keep streets alive.
     if (Math.hypot(p.x - playerPos.x, p.z - playerPos.z) > 320 && car.speed < 1) {
       const spot = city.randomRoadPos(Math.random);
       p.x = spot.x;
@@ -136,7 +131,6 @@ export function updateTraffic(dt, city) {
   }
 }
 
-// How many traffic cars are currently rolling (used by the HUD hint).
 export function rollingTrafficCount() {
   let n = 0;
   for (const car of G.cars) if (car.driver === 'traffic' && car.speed > 1) n++;

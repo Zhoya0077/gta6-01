@@ -1,6 +1,8 @@
-// localStorage saves: cash, health, ammo, story progress, stats and the
-// player's last position. Wanted level is never saved — a fresh session
-// always starts clean, the way a new morning in the city should.
+// Saves in localStorage: cash, health, ammo, story progress, stats and
+// where Mara was standing. The wanted level is deliberately never
+// saved — every fresh session starts with a clean slate, like a new
+// morning in the city. The version field lets a future build refuse
+// saves from an older layout instead of misreading them.
 
 import { G } from './state.js';
 
@@ -70,8 +72,8 @@ export function clearSave() {
   } catch { /* private mode: nothing to clear */ }
 }
 
-// Save quietly every 20 seconds while playing, plus on pause and busted,
-// so a closed tab never costs more than a short drive.
+// Quiet autosave every 20 seconds of play, plus on pause and bust, so
+// closing the tab never costs more than a short drive.
 export function maybeAutosave(dt) {
   maybeAutosave._t = (maybeAutosave._t || 0) + dt;
   if (maybeAutosave._t > 20) {

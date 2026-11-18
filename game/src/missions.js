@@ -1,7 +1,8 @@
-// Five chained story jobs for Mara Voss, from a first timed fare to the
-// Aurora S itself. Each mission is stages with a glowing beacon, phone
-// briefings from Dario, and a payout that chips at Mara's debt. Timers
-// forgive: running out restarts the job, it never ends the story.
+// Five chained story jobs for Mara Voss, from a first timed fare to
+// the Aurora S itself. Each job is a chain of stages marked by a
+// glowing beacon, opened by a phone briefing from Dario, and paid on
+// completion. Timers are forgiving: running out restarts the job, it
+// never ends the story.
 
 import * as THREE from 'three';
 import { G, emit } from './state.js';
@@ -62,7 +63,6 @@ export const MISSIONS = [
   },
 ];
 
-let sceneRef = null;
 let beaconGroup = null;
 let beaconRing = null;
 let passengerFig = null;
@@ -102,7 +102,6 @@ function buildBeacon(scene) {
 }
 
 export function initMissions(scene) {
-  sceneRef = scene;
   buildBeacon(scene);
   passengerFig = makeFigure({ shirt: 0x7d4fc9, pants: 0x2b3440 });
   passengerFig.group.position.set(-90, 0, -30);
@@ -130,12 +129,11 @@ function placeBeacon() {
     return;
   }
   const pos = stage.pos;
-  // Story-car stages track the car itself once it moves.
-  if (stage.needStoryCar) {
+  // Steal stages track the car itself once it moves; delivery stages
+  // keep the beacon on the destination, where the car must arrive.
+  if (stage.needStoryCar && !stage.needCar) {
     const car = findStoryCar(stage.needStoryCar);
-    if (car && G.missionStage > 0 && stage.needCar) {
-      // Delivery: beacon stays on the destination.
-    } else if (car && !stage.needCar) {
+    if (car) {
       beaconGroup.position.set(car.mesh.position.x, 0, car.mesh.position.z);
       G.objectivePos = { x: car.mesh.position.x, z: car.mesh.position.z };
       G.objectiveLabel = stage.label;
@@ -191,7 +189,6 @@ export function debugSetMission(index, stage) {
 
 function advanceStage() {
   const m = MISSIONS[G.missionIndex];
-  // Stage side effects.
   if (G.missionIndex === 0 && G.missionStage === 0) {
     passengerFig.group.visible = false;
     G.passenger = true;
@@ -267,14 +264,12 @@ function failTimer() {
 }
 
 export function updateMissions(dt) {
-  // Beacon pulse.
   if (beaconGroup && beaconGroup.visible) {
     const s = 1 + Math.sin(G.time * 3.2) * 0.12;
     beaconRing.scale.set(s, s, s);
     beaconGroup.rotation.y += dt * 0.6;
   }
   if (G.missionIndex >= MISSIONS.length) return;
-  // Next briefing after a short breather between jobs.
   if (!briefingSent) {
     G.missionCooldown -= dt;
     if (G.missionCooldown <= 0) startMission(G.missionIndex);
@@ -282,7 +277,6 @@ export function updateMissions(dt) {
   }
   const stage = currentStage();
   if (!stage) return;
-  // Start the stage timer once, on entry.
   if (stage.timer && !stageTimerRunning && G.missionTimer < 0) {
     G.missionTimer = stage.timer;
     stageTimerRunning = true;
@@ -300,7 +294,6 @@ export function updateMissions(dt) {
   const tx = target ? target.mesh.position.x : stage.pos.x;
   const tz = target ? target.mesh.position.z : stage.pos.z;
   const d = Math.hypot(p.x - tx, p.z - tz);
-  // Story-car steal stages complete on entering the car.
   if (stage.needStoryCar && !stage.needCar) {
     const car = findStoryCar(stage.needStoryCar);
     if (car && G.player.inCar === car) {
@@ -310,7 +303,6 @@ export function updateMissions(dt) {
     if (d < 7 && car) placeBeacon();
     return;
   }
-  // Delivery stages need the right car at the marker.
   if (stage.needStoryCar && stage.needCar) {
     const car = findStoryCar(stage.needStoryCar);
     if (d < 9 && G.player.inCar === car) {
@@ -319,7 +311,6 @@ export function updateMissions(dt) {
     }
     return;
   }
-  // Driving stages need any car; walking stages need feet (or wheels).
   if (stage.needCar) {
     if (d < 9 && G.player.inCar) advanceStage();
     return;
@@ -332,7 +323,6 @@ export function missionProgressText() {
   return 'Job ' + (G.missionIndex + 1) + ' of ' + MISSIONS.length;
 }
 
-// Distance to the live objective, for the HUD's range readout.
 export function objectiveDistance() {
   if (!G.objectivePos || !G.player) return null;
   const p = G.player.pos();

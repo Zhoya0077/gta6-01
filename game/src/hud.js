@@ -1,7 +1,8 @@
-// HUD and screens: cash, health, ammo, wanted stars, clock, district,
-// objective chip, drive readout, phone messages, toasts, announcements,
-// prompts, and the menu / pause / busted / complete overlays. All DOM,
-// updated from state every frame, with pulses on every change that hurts.
+// HUD and screens, all DOM: cash, health, ammo, wanted stars, clock,
+// district, the objective chip, the drive readout, phone messages,
+// toasts, announcements, prompts, and the menu / pause / busted /
+// complete overlays. Updated from state every frame, with a pulse on
+// every change that stings.
 
 import { G, on } from './state.js';
 import { formatMoney, formatClock, formatTimer } from './util.js';
@@ -129,10 +130,11 @@ export function updateHud(dt) {
   }
   damageTimer = Math.max(0, damageTimer - dt);
   els.damageFlash.style.opacity = damageTimer > 0 ? '1' : '0';
-  // Hint fades after the first minute of play.
   hintFade += dt;
   if (els.hint) els.hint.style.opacity = hintFade > 60 ? '0' : '1';
 
+  // Star changes and cash changes pulse; the DOM only rewrites when a
+  // value actually moved, so the HUD never flickers on a quiet frame.
   if (G.cash !== lastCash) {
     if (lastCash >= 0 && G.cash < lastCash) pulse(els.cash);
     els.cash.textContent = formatMoney(G.cash);
@@ -165,6 +167,7 @@ export function updateHud(dt) {
     const district = G.city.districtAt(p.x, p.z);
     const evading = isEvading();
     els.district.textContent = (evading ? 'EVADING • ' : '') + district;
+    void p;
   }
   if (G.missionTimer > 0) {
     els.missionTimer.textContent = formatTimer(G.missionTimer);
@@ -172,7 +175,6 @@ export function updateHud(dt) {
   } else {
     els.missionTimer.classList.remove('on');
   }
-  // Drive readout.
   if (G.player && G.player.inCar) {
     const car = G.player.inCar;
     els.driveBox.classList.add('on');
@@ -184,7 +186,6 @@ export function updateHud(dt) {
     els.driveBox.classList.remove('on');
     els.crosshair.classList.toggle('on', G.mode === 'playing' && G.ammo > 0);
   }
-  // HUD breathes: dim the top-left panel while cruising calmly.
   const calm = G.wanted === 0 && G.missionTimer <= 0;
   els.hud.style.setProperty('--hud-dim', calm ? '0.82' : '1');
 }

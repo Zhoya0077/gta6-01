@@ -1,7 +1,8 @@
-// Solmarina boot and main loop: renderer, world assembly, camera,
+// Solmarina boot and main loop: the renderer, world assembly, camera,
 // screens, and the frame that drives every system. The menu orbits the
-// city; the game chases Mara with a damped third-person camera whose
-// field of view widens with speed and shakes with every hard hit.
+// city; in play, a damped third-person camera chases Mara, its field
+// of view widening with speed and shaking with every hard hit. Frame
+// time is clamped so a stalled tab never teleports the world forward.
 
 import * as THREE from 'three';
 import { G, on, emit, resetState } from './state.js';
@@ -19,8 +20,7 @@ import { drawMinimap } from './minimap.js';
 import { applyShotPreset, shotFrameTarget } from './shots.js';
 import { hasSave, saveGame, loadSave, applySave, maybeAutosave } from './save.js';
 import { createCar } from './vehicles.js';
-import { clamp, damp, angleDamp, formatMoney } from './util.js';
-import { makeRng } from './util.js';
+import { clamp, damp, angleDamp, formatMoney, makeRng } from './util.js';
 
 const params = new URLSearchParams(window.location.search);
 const shotName = params.get('shot');
@@ -52,7 +52,6 @@ G.input.attach(renderer.domElement);
 G.audio = new AudioSys();
 G.player = new Player(scene);
 
-// Story cars, placed before the systems that reference them.
 const falcon = createCar('falcon', 155, -150, Math.PI / 2, { driver: 'parked', storyCar: 'falcon' });
 scene.add(falcon.mesh);
 G.cars.push(falcon);
@@ -70,10 +69,9 @@ initHud();
 
 const minimapCanvas = document.getElementById('minimap');
 let lastDragTime = -99;
-let baseFov = 62;
+const baseFov = 62;
 let menuAngle = 0;
 
-// --- Screens and buttons ---------------------------------------------------
 const btnNew = document.getElementById('btn-new');
 const btnContinue = document.getElementById('btn-continue');
 const btnResume = document.getElementById('btn-resume');
@@ -122,11 +120,7 @@ function beginPlay(fresh) {
   showScreen(null);
   document.getElementById('hud').classList.add('on');
   G.hintTimer = 0;
-  if (fresh) {
-    // Start the first briefing directly: the between-jobs cooldown path
-    // only fires when no briefing has ever been sent this session.
-    startMission(0);
-  }
+  if (fresh) startMission(0);
 }
 
 function beginContinue() {
@@ -236,7 +230,6 @@ on('storyComplete', () => {
 });
 
 on('carStolen', () => {
-  // Stealing in sight of the law draws heat immediately.
   const p = G.player.pos();
   let seen = false;
   for (const car of G.cars) {
@@ -252,7 +245,6 @@ on('carStolen', () => {
   }
 });
 
-// --- Camera ----------------------------------------------------------------
 function updateCamera(dt) {
   if (G.mode === 'menu') {
     menuAngle += dt * 0.045;
@@ -291,7 +283,6 @@ function updateCamera(dt) {
     target.y + sp * G.cameraDist + sy,
     target.z + Math.cos(G.cameraYaw) * cp * G.cameraDist,
   );
-  // Never let the camera sink under the street.
   if (camera.position.y < 1.1) camera.position.y = 1.1;
   const lookAhead = driving ? 3.2 : 1.4;
   const fwd = G.player.inCar ? G.player.inCar.heading : G.player.heading;
@@ -361,26 +352,23 @@ function updateLighting() {
   if (want !== G.city.timeMode) G.city.setTimeOfDay(want);
 }
 
-// --- Shot mode ---------------------------------------------------------------
 if (shotName) {
   resetState();
   G.mode = 'playing';
   showScreen(null);
   document.getElementById('hud').classList.add('on');
-  // Briefings are skipped in shot mode; the preset stages the objective.
   applyShotPreset(shotName);
 } else {
   refreshMenu();
   showScreen('menu');
 }
 
-// Debug handle for the capture harness and curious players.
 window.__GAME__ = {
   G,
   startMission,
   setWanted,
   teleport: (x, z, h) => G.player.teleport(x, z, h),
-  version: 'solmarina-rebuild-1',
+  version: 'solmarina-rebuild-2',
 };
 
 document.getElementById('loading').classList.add('done');
@@ -392,7 +380,6 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-// --- Main loop ---------------------------------------------------------------
 let last = performance.now();
 function frame(now) {
   requestAnimationFrame(frame);

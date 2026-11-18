@@ -1,6 +1,7 @@
-// All sound is synthesised live with WebAudio: no audio files, no network.
-// Engine hum, siren wail, gunshots, footsteps of the city. The context is
-// created lazily on the first user gesture so browsers allow it.
+// Every sound is synthesised live through WebAudio — no audio files,
+// no network. A looping engine hum, a wailing siren, skids, gunshots
+// and the little chimes of the city. The context only starts on the
+// first user gesture, as browsers require.
 
 export class AudioSys {
   constructor() {
@@ -44,6 +45,9 @@ export class AudioSys {
     }
   }
 
+  // The three loops (engine, siren, skid) run from the first gesture
+  // and are mixed by gain only — starting and stopping nodes per frame
+  // would click audibly.
   _startEngine() {
     const ctx = this.ctx;
     this.engineOsc = ctx.createOscillator();
@@ -88,7 +92,7 @@ export class AudioSys {
     this.skidSrc.start();
   }
 
-  // Called every frame: engine pitch follows speed, siren wails with heat.
+  // Each frame: engine pitch tracks speed, the siren wails with heat.
   update(speed, driving, wanted, slipping) {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
@@ -156,6 +160,5 @@ export class AudioSys {
   click() { this._blip(740, 0.05, 'square', 0.12); }
   door() { this._noise(0.08, 0.3, 900, 'lowpass'); }
   checkpoint() { this._blip(1046, 0.1, 'sine', 0.25); setTimeout(() => this._blip(1568, 0.16, 'sine', 0.22), 90); }
-  // Short two-tone horn for traffic flavor and mission arrivals.
   horn() { this._blip(370, 0.22, 'square', 0.12); this._blip(466, 0.22, 'square', 0.1); }
 }

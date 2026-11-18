@@ -1,6 +1,6 @@
-// Pedestrians: sidewalk wanderers who stop to chat, cross at corners,
-// and run when a crime happens nearby. A fleeing crowd is the city's
-// fastest way of telling the player the heat just went up.
+// Pedestrians: sidewalk wanderers who stroll, idle, cross at corners,
+// and scatter when a crime goes off nearby. A fleeing crowd is the
+// city's fastest way of telling the player the heat just went up.
 
 import { G, WORLD_HALF } from './state.js';
 import { makeFigure, animateFigure } from './characters.js';
@@ -40,9 +40,9 @@ export function spawnPeds(scene, count, seed, city) {
 }
 
 function pickTarget(ped, city, nextFn) {
-  // nextFn is a plain () => [0,1) function (Math.random or an RNG's
-  // next), NOT the makeRng helper object — calling .range on it threw
-  // every frame once the first pedestrian finished idling.
+  // nextFn is a plain () => [0,1) function, NOT a makeRng object. Only
+  // call it directly — .range/.pick live on the helper object, and
+  // calling them on a bare function once threw thousands of errors.
   const next = typeof nextFn === 'function' ? nextFn : Math.random;
   for (let tries = 0; tries < 12; tries++) {
     const x = ped.fig.group.position.x + (next() * 110 - 55);
@@ -62,6 +62,8 @@ export function updatePeds(dt, city, rngFn) {
   const crimeFresh = crime && G.time - G.lastCrimeTime < 6;
   for (const ped of G.peds) {
     const p = ped.fig.group.position;
+    // A knocked-down pedestrian gets up after a few seconds and runs
+    // — nobody in Solmarina stays down for long.
     if (ped.down) {
       ped.downTimer -= dt;
       ped.fig.group.rotation.x = Math.min(Math.PI / 2, ped.fig.group.rotation.x + dt * 4);
@@ -74,8 +76,6 @@ export function updatePeds(dt, city, rngFn) {
       }
       continue;
     }
-    // Flee triggers: fresh crime nearby, high wanted + player close,
-    // or a car bearing down on the sidewalk.
     let flee = ped.fleeTimer > 0;
     if (crimeFresh && Math.hypot(p.x - crime.x, p.z - crime.z) < 42) flee = true;
     if (G.wanted >= 2 && Math.hypot(p.x - playerPos.x, p.z - playerPos.z) < 20) flee = true;
@@ -86,11 +86,9 @@ export function updatePeds(dt, city, rngFn) {
     ped.fleeTimer = Math.max(0, ped.fleeTimer - dt);
 
     if (ped.state === 'flee') {
-      // Run away from the threat, preferring open ground.
       const awayFrom = crimeFresh ? crime : playerPos;
       const away = Math.atan2(p.x - awayFrom.x, p.z - awayFrom.z);
       ped.heading += (away - ped.heading) * Math.min(1, dt * 4);
-      // Normalise heading drift.
       while (ped.heading > Math.PI) ped.heading -= Math.PI * 2;
       while (ped.heading < -Math.PI) ped.heading += Math.PI * 2;
       ped.speed = 6.4;
@@ -133,8 +131,8 @@ export function updatePeds(dt, city, rngFn) {
           while (dh < -Math.PI) dh += Math.PI * 2;
           ped.heading += Math.max(-3 * dt, Math.min(3 * dt, dh));
           ped.speed = 1.7;
-          let nx = p.x + Math.sin(ped.heading) * ped.speed * dt;
-          let nz = p.z + Math.cos(ped.heading) * ped.speed * dt;
+          const nx = p.x + Math.sin(ped.heading) * ped.speed * dt;
+          const nz = p.z + Math.cos(ped.heading) * ped.speed * dt;
           const res = city.collideCircle(nx, nz, 0.5);
           p.x = res.x;
           p.z = res.z;
@@ -152,7 +150,6 @@ export function knockDownPed(ped) {
   ped.health = 0;
 }
 
-// Nearest pedestrian to a point, for punch and shot resolution.
 export function nearestPed(x, z, maxDist) {
   let best = null;
   let bestD = maxDist;

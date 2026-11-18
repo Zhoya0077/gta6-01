@@ -1,6 +1,6 @@
-// Mara on foot and behind the wheel: camera-relative movement, run and
-// jump, entering and stealing cars, and the handoff to driving physics.
-// The camera target is always Mara or her car, never a free orbit.
+// Mara, on foot and behind the wheel: camera-relative walking, run
+// and jump, stealing and entering cars, and the handoff to the driving
+// model. The camera always chases Mara or her car — never a free orbit.
 
 import { G, emit, addShake } from './state.js';
 import { makeMara, animateFigure } from './characters.js';
@@ -28,7 +28,6 @@ export class Player {
     return { x: p.x, z: p.z };
   }
 
-  // Eye height for camera targets and police line checks.
   headPos() {
     const p = this.pos();
     return { x: p.x, y: this.inCar ? 1.6 : 1.7, z: p.z };
@@ -57,6 +56,8 @@ export class Player {
     if (G.audio) G.audio.door();
   }
 
+  // Mara steps out on the car's left side, clear of traffic, and the
+  // car becomes an ordinary parked car again.
   exitCar(silent) {
     const car = this.inCar;
     if (!car) return;
@@ -104,6 +105,8 @@ export class Player {
     emit('playerHurt', { amount });
     if (G.audio) G.audio.hurt();
     if (G.health <= 0) emit('playerDown', {});
+    void fromX;
+    void fromZ;
   }
 
   update(dt, input) {
@@ -123,11 +126,9 @@ export class Player {
       G.stats.distanceKm += moved / 1000;
       if (car.health < prevHealth - 1 && G.audio) G.audio.crash(Math.abs(car.speed));
       if (car.health <= 0) {
-        // Wrecked: Mara climbs out, the car stays dead where it stopped.
         this.exitCar(true);
         emit('carWrecked', { car });
       }
-      // Camera follows the car's heading when driving fast.
       if (Math.abs(car.speed) > 6) {
         G.cameraTargetYaw = car.heading + Math.PI;
       }
@@ -135,14 +136,13 @@ export class Player {
       return { driving: true, speed: car.speed, slipping };
     }
 
-    // On foot: move relative to the camera yaw.
+    // On foot, movement is relative to where the camera sits.
     const camYaw = G.cameraYaw;
     let mx = 0;
     let mz = 0;
     if (axes.y !== 0 || axes.x !== 0) {
       const sin = Math.sin(camYaw);
       const cos = Math.cos(camYaw);
-      // Forward on screen is away from the camera.
       mx = -sin * axes.y + -cos * axes.x;
       mz = -cos * axes.y + sin * axes.x;
       const len = Math.hypot(mx, mz);
@@ -155,16 +155,13 @@ export class Player {
     if (this.walkSpeed > 0.2) {
       const wantHeading = Math.atan2(mx, mz);
       this.heading = angleDamp(this.heading, wantHeading, 12, dt);
-      let nx = this.fig.group.position.x + mx * this.walkSpeed * dt;
-      let nz = this.fig.group.position.z + mz * this.walkSpeed * dt;
+      const nx = this.fig.group.position.x + mx * this.walkSpeed * dt;
+      const nz = this.fig.group.position.z + mz * this.walkSpeed * dt;
       const res = G.city.collideCircle(nx, nz, 0.5);
-      nx = res.x;
-      nz = res.z;
-      this.fig.group.position.x = nx;
-      this.fig.group.position.z = nz;
+      this.fig.group.position.x = res.x;
+      this.fig.group.position.z = res.z;
       G.stats.distanceKm += this.walkSpeed * dt / 1000;
     }
-    // Jump + gravity.
     if (input.consume('Space') && this.onGround) {
       this.velY = 7.5;
       this.onGround = false;

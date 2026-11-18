@@ -1,11 +1,14 @@
-// Solmarina itself: a procedural coastal grid city built entirely in code.
-// Roads, blocks, towers, palms, lamps, the pier and the sea. Facades are
-// canvas textures so windows glow at night without a single image file,
-// and every building registers a collider the physics can trust.
+// Solmarina itself: a procedural coastal grid city built entirely in
+// code. Roads and blocks, towers, palms, lamps, the pier and the sea.
+// Facades are canvas textures, so windows glow at night without a
+// single image file, and every solid object registers a collider the
+// physics can trust.
 
 import * as THREE from 'three';
 import { WORLD_HALF, SHORE_X, PIER_Z_MIN, PIER_Z_MAX, ROAD_LINES, ROAD_WIDTH, BLOCK_PITCH } from './state.js';
 import { makeRng, clamp } from './util.js';
+
+void BLOCK_PITCH;
 
 const PALETTE = [0xe8dcc8, 0xdfc9a8, 0xc9d6dd, 0xe6b8a2, 0xb8c9a8, 0xd9b8c4, 0xf2e8d5, 0xa8bfd4];
 const TOWER_COLORS = [0x8fa8bf, 0x7d94a8, 0x9fb4c4, 0x6f87a0, 0xb0a890];
@@ -17,7 +20,6 @@ function facadeTexture(base, rng, floors, cols) {
   const ctx = canvas.getContext('2d');
   ctx.fillStyle = '#' + base.toString(16).padStart(6, '0');
   ctx.fillRect(0, 0, 128, 256);
-  // Subtle vertical shading so flat walls read as concrete.
   const grad = ctx.createLinearGradient(0, 0, 128, 0);
   grad.addColorStop(0, 'rgba(0,0,0,0.12)');
   grad.addColorStop(0.5, 'rgba(255,255,255,0.06)');
@@ -41,7 +43,6 @@ function facadeTexture(base, rng, floors, cols) {
   }
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
-  // Emissive map: only lit windows shine.
   const eCanvas = document.createElement('canvas');
   eCanvas.width = 128;
   eCanvas.height = 256;
@@ -91,7 +92,7 @@ export function buildCity(scene, seed) {
   const windowMats = [];
   const glowSprites = [];
 
-  // --- Ground, roads, beach, sea -----------------------------------------
+  // Ground, roads, beach, sea.
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(WORLD_HALF * 2 + 220, WORLD_HALF * 2 + 220),
     new THREE.MeshStandardMaterial({ color: 0x6f8f5a, roughness: 1 }),
@@ -123,7 +124,6 @@ export function buildCity(scene, seed) {
     vRoad.position.set(line, 0.02, 0);
     vRoad.receiveShadow = true;
     group.add(vRoad);
-    // Dashed centre lines.
     for (let t = -WORLD_HALF + 15; t < WORLD_HALF; t += 12) {
       const dashH = new THREE.Mesh(new THREE.PlaneGeometry(5, 0.5), lineMat);
       dashH.rotation.x = -Math.PI / 2;
@@ -136,7 +136,6 @@ export function buildCity(scene, seed) {
     }
   }
 
-  // Beach sand and the sea to the east.
   const sand = new THREE.Mesh(
     new THREE.PlaneGeometry(40, WORLD_HALF * 2),
     new THREE.MeshStandardMaterial({ color: 0xdcc49a, roughness: 1 }),
@@ -151,7 +150,7 @@ export function buildCity(scene, seed) {
   sea.position.set(SHORE_X + 150, -0.3, 0);
   group.add(sea);
 
-  // --- Buildings ----------------------------------------------------------
+  // Buildings, block by block.
   const blockCenters = [];
   for (let ix = 0; ix < ROAD_LINES.length - 1; ix++) {
     for (let iz = 0; iz < ROAD_LINES.length - 1; iz++) {
@@ -161,7 +160,6 @@ export function buildCity(scene, seed) {
       });
     }
   }
-  // Outer ring blocks beyond the grid edges.
   for (const x of [-240, 240]) {
     for (let z = -210; z <= 210; z += 60) blockCenters.push({ x, z });
   }
@@ -169,6 +167,9 @@ export function buildCity(scene, seed) {
     for (let x = -180; x <= 180; x += 60) blockCenters.push({ x, z });
   }
 
+  // Facade textures are cached by colour and grid size: dozens of
+  // buildings share a handful of canvases, which keeps texture memory
+  // small and the build fast.
   const facadeCache = new Map();
   function facadeFor(base, floors, cols) {
     const key = base + '/' + floors + '/' + cols;
@@ -177,7 +178,7 @@ export function buildCity(scene, seed) {
   }
 
   for (const block of blockCenters) {
-    if (block.x > SHORE_X - 30) continue; // keep the beach open
+    if (block.x > SHORE_X - 30) continue;
     const distCenter = Math.hypot(block.x, block.z);
     const downtown = distCenter < 95;
     const count = downtown ? rng.int(1, 2) : rng.int(2, 4);
@@ -203,7 +204,6 @@ export function buildCity(scene, seed) {
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       group.add(mesh);
-      // Flat roof cap.
       const roof = new THREE.Mesh(
         new THREE.BoxGeometry(w + 0.6, 0.5, d + 0.6),
         new THREE.MeshStandardMaterial({ color: 0x55585c, roughness: 1 }),
@@ -214,7 +214,7 @@ export function buildCity(scene, seed) {
     }
   }
 
-  // --- Palms, lamps, props -------------------------------------------------
+  // Palms along the beach and scattered through the blocks.
   const trunkMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2f, roughness: 1 });
   const frondMat = new THREE.MeshStandardMaterial({ color: 0x2f7d4a, roughness: 0.9, side: THREE.DoubleSide });
   function palm(x, z, s) {
@@ -247,6 +247,7 @@ export function buildCity(scene, seed) {
     palm(rng.range(-240, 230), rng.range(-240, 240), rng.range(0.8, 1.15));
   }
 
+  // Street lamps with a cheap additive glow pool — no extra lights.
   const poleMat = new THREE.MeshStandardMaterial({ color: 0x2b2f33, roughness: 0.6, metalness: 0.4 });
   const bulbMat = new THREE.MeshStandardMaterial({ color: 0xfff2c0, emissive: 0xffd98a, emissiveIntensity: 1.6 });
   lampMats.push(bulbMat);
@@ -259,7 +260,6 @@ export function buildCity(scene, seed) {
     const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.34, 10, 8), bulbMat);
     bulb.position.y = 6.5;
     g.add(bulb);
-    // Cheap glow pool on the asphalt: additive, no extra lights.
     const pool = new THREE.Mesh(
       new THREE.CircleGeometry(5.5, 20),
       new THREE.MeshBasicMaterial({ color: 0xffd98a, transparent: true, opacity: 0.0, blending: THREE.AdditiveBlending, depthWrite: false }),
@@ -277,6 +277,7 @@ export function buildCity(scene, seed) {
       lamp(line + 8, t + 8);
     }
   }
+  void lampMats;
 
   // Billboards with invented local names.
   const billboards = [
@@ -299,7 +300,7 @@ export function buildCity(scene, seed) {
     colliders.push({ minX: b.x - 0.6, maxX: b.x + 0.6, minZ: b.z - 0.6, maxZ: b.z + 0.6 });
   }
 
-  // --- Pier ----------------------------------------------------------------
+  // The pier, reaching east over the water.
   const pierMat = new THREE.MeshStandardMaterial({ color: 0x7a5c3e, roughness: 1 });
   const pierDeck = new THREE.Mesh(new THREE.BoxGeometry(34, 0.8, 12), pierMat);
   pierDeck.position.set(SHORE_X + 14, 0.6, (PIER_Z_MIN + PIER_Z_MAX) / 2);
@@ -321,7 +322,7 @@ export function buildCity(scene, seed) {
   group.add(shack);
   colliders.push({ minX: SHORE_X + 22.5, maxX: SHORE_X + 29.5, minZ: PIER_Z_MIN, maxZ: PIER_Z_MIN + 6 });
 
-  // --- Shops ---------------------------------------------------------------
+  // The three shops, each with a sign and an awning.
   const shops = [
     { name: 'Harbor Guns', kind: 'guns', x: -60, z: -28, color: '#5c1717' },
     { name: 'Marina Market', kind: 'market', x: 60, z: 32, color: '#14594a' },
@@ -343,7 +344,7 @@ export function buildCity(scene, seed) {
     group.add(awning);
   }
 
-  // --- Lights, sky, clouds ---------------------------------------------------
+  // Sun, sky, clouds.
   const sun = new THREE.DirectionalLight(0xffd9a0, 2.6);
   sun.position.set(-120, 160, 60);
   sun.castShadow = true;
@@ -435,9 +436,9 @@ export function buildCity(scene, seed) {
     return false;
   }
 
-  // Push a circle out of building colliders, world bounds and deep water.
-  // A small skin keeps parked cars from jittering against walls (float
-  // noise used to pin them); callers at scrape speed skip the push.
+  // Push a circle out of building colliders, world bounds and deep
+  // water. A small skin keeps bodies from jittering against walls;
+  // callers at scrape speed ask for a thinner one.
   function collideCircle(x, z, r, opts = {}) {
     const skin = opts.skin ?? 0.06;
     let hit = false;
@@ -446,7 +447,6 @@ export function buildCity(scene, seed) {
     if (x > SHORE_X + 26) { x = SHORE_X + 26; hit = true; }
     if (z < -half) { z = -half; hit = true; }
     if (z > half) { z = half; hit = true; }
-    // Water: only the pier corridor stays walkable past the shoreline.
     if (x > SHORE_X - 2 && !(z > PIER_Z_MIN - 1 && z < PIER_Z_MAX + 1)) {
       if (x > SHORE_X + 4) { x = SHORE_X + 4; hit = true; }
     }
@@ -468,7 +468,6 @@ export function buildCity(scene, seed) {
           x = cx + (dx / d) * rr;
           z = cz + (dz / d) * rr;
         } else {
-          // Centre inside the box: push out along the smallest overlap.
           const pushL = x - c.minX + rr;
           const pushR = c.maxX - x + rr;
           const pushU = z - c.minZ + rr;
@@ -493,7 +492,6 @@ export function buildCity(scene, seed) {
     }
   }
 
-  // A random point on a road centre line, for traffic and parked cars.
   function randomRoadPos(rngFn) {
     const line = ROAD_LINES[Math.floor(rngFn() * ROAD_LINES.length)];
     const along = (rngFn() * 2 - 1) * (WORLD_HALF - 30);

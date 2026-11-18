@@ -1,7 +1,8 @@
-// Cars: six invented models, built from boxes with wheels that spin and
-// steer, headlights that glow at night, and brake lights. Physics is a
-// simple arcade bicycle model with drift on the handbrake, wall scrape
-// handling, and car-to-car bumps.
+// Cars: six invented models plus the police interceptor, all built
+// from boxes, with wheels that spin and steer, headlights that brighten
+// at night and brake lights that flare. Driving is a simple arcade
+// bicycle model with a handbrake drift, wall scrapes and soft bumps
+// between cars.
 
 import * as THREE from 'three';
 import { clamp, damp } from './util.js';
@@ -45,7 +46,6 @@ export function makeCarMesh(defKey, paint) {
   }
   cabin.castShadow = true;
   group.add(cabin);
-  // Bumpers, grille, mirrors.
   const bumperF = new THREE.Mesh(new THREE.BoxGeometry(W + 0.06, 0.22, 0.24), darkMat);
   bumperF.position.set(0, low + 0.18, L / 2);
   group.add(bumperF);
@@ -57,7 +57,6 @@ export function makeCarMesh(defKey, paint) {
     mirror.position.set(sx * (W / 2 + 0.06), low + 0.78, L * 0.14);
     group.add(mirror);
   }
-  // Headlights + tail lights.
   const headMat = new THREE.MeshStandardMaterial({ color: 0xfff8d6, emissive: 0xfff2b0, emissiveIntensity: 0.9 });
   const tailMat = new THREE.MeshStandardMaterial({ color: 0x881111, emissive: 0xff2222, emissiveIntensity: 0.5 });
   const heads = [];
@@ -85,12 +84,12 @@ export function makeCarMesh(defKey, paint) {
     barB.position.set(0.28, low + 1.2, -L * 0.06);
     group.add(barR, barB);
     group.userData.lightBar = { barR, barB };
-    // White doors stripe.
     const stripe = new THREE.Mesh(new THREE.BoxGeometry(W + 0.02, 0.3, L * 0.5), new THREE.MeshStandardMaterial({ color: 0xe8e8e8, roughness: 0.5 }));
     stripe.position.set(0, low + 0.35, 0);
     group.add(stripe);
   }
-  // Wheels.
+  // Wheels sit on pivots so the fronts can steer while all four spin
+  // around their own axles; the hub rides inside the wheel mesh.
   const wheelGeo = new THREE.CylinderGeometry(0.36, 0.36, 0.28, 14);
   wheelGeo.rotateZ(Math.PI / 2);
   const wheelMat = new THREE.MeshStandardMaterial({ color: 0x141414, roughness: 0.95 });
@@ -115,6 +114,7 @@ export function makeCarMesh(defKey, paint) {
   group.userData.headMat = headMat;
   group.userData.tailMat = tailMat;
   group.userData.wheelSpin = 0;
+  void heads;
   return group;
 }
 
@@ -144,14 +144,14 @@ export function createCar(defKey, x, z, heading, opts = {}) {
   };
 }
 
-// Shared movement: advance along heading, resolve walls, spin wheels.
+// One shared mover: step along the heading, resolve walls, spin wheels.
 export function moveCar(car, dt, city, others) {
   const def = car.def;
   const step = car.speed * dt;
   let nx = car.mesh.position.x + Math.sin(car.heading) * step;
   let nz = car.mesh.position.z + Math.cos(car.heading) * step;
-  // At crawl speed, skip the wall push so parked cars never get pinned
-  // by collision float noise (a real bug in an earlier build).
+  // At crawl speed the wall push is skipped: collision float noise once
+  // pinned parked cars against walls for good. Faster cars take the push.
   if (Math.abs(car.speed) > 0.6) {
     const res = city.collideCircle(nx, nz, def.width * 0.62, { skin: 0.06 });
     if (res.hit && Math.abs(car.speed) > 4) {
@@ -167,7 +167,6 @@ export function moveCar(car, dt, city, others) {
     nx = res.x;
     nz = res.z;
   }
-  // Soft car-to-car bumps.
   if (others) {
     for (const other of others) {
       if (other === car) continue;
@@ -191,13 +190,11 @@ export function moveCar(car, dt, city, others) {
   car.mesh.position.x = nx;
   car.mesh.position.z = nz;
   car.mesh.rotation.y = car.heading;
-  // Wheels: spin with speed, steer with input.
   const spin = car.speed * dt / 0.36;
   car.mesh.userData.wheelSpin += spin;
   for (const w of car.mesh.userData.wheels) w.rotation.x = car.mesh.userData.wheelSpin;
   for (const s of car.mesh.userData.steers) s.rotation.y = car.steer * 0.45;
   car.mesh.userData.tailMat.emissiveIntensity = car.brakeOn ? 2.2 : 0.5;
-  // Body lean and police lightbar strobe.
   car.mesh.rotation.z = clamp(-car.steer * car.speed * 0.0035, -0.06, 0.06);
   if (car.mesh.userData.lightBar) {
     const phase = Math.floor(performance.now() / 140) % 2;
@@ -207,7 +204,7 @@ export function moveCar(car, dt, city, others) {
   if (car.health < 30) car.damageSmoke += dt;
 }
 
-// Player driving input: throttle/brake/steer/handbrake with drift.
+// The player's own driving: throttle, brake, steering, handbrake drift.
 export function drivePlayerCar(car, axes, dt, handbrake) {
   const def = car.def;
   const targetSteer = axes.x * (car.speed >= 0 ? 1 : -1);
@@ -243,7 +240,6 @@ export function setNightLights(car, night) {
   car.mesh.userData.headMat.emissiveIntensity = night ? 2.4 : 0.9;
 }
 
-// Distance from a point to the car's centre, used for enter-car prompts.
 export function carDistance(car, x, z) {
   return Math.hypot(car.mesh.position.x - x, car.mesh.position.z - z);
 }

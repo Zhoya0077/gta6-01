@@ -1,11 +1,13 @@
-// Combat, pickups, guards and shops: fists, the pistol, health and ammo
-// scattered through the city, warehouse guards who protect the Aurora,
-// and three storefronts where cash turns into survival.
+// Combat, pickups, guards and shops: fists and the pistol, health and
+// ammo scattered through the city, warehouse guards posted around the
+// Aurora lot, and three storefronts where cash turns into survival.
+// Crimes share one report path so the cooldown and the wanted bump
+// stay consistent no matter which weapon caused them.
 
 import * as THREE from 'three';
 import { G, emit, on } from './state.js';
-import { makeFigure, makeGuard, animateFigure } from './characters.js';
-import { nearestPed, knockDownPed } from './pedestrians.js';
+import { makeGuard, animateFigure } from './characters.js';
+import { knockDownPed } from './pedestrians.js';
 import { addWanted } from './police.js';
 
 let sceneRef = null;
@@ -30,16 +32,14 @@ function makePickupMesh(kind) {
   const group = new THREE.Group();
   if (kind === 'health') {
     const mat = new THREE.MeshStandardMaterial({ color: 0x2ecc71, emissive: 0x27ae60, emissiveIntensity: 0.7, roughness: 0.5 });
-    const box = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 0.3), mat);
-    group.add(box);
+    group.add(new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 0.3), mat));
     const crossMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.5 });
     const h = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.2, 0.34), crossMat);
     const v = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.6, 0.34), crossMat);
     group.add(h, v);
   } else {
     const mat = new THREE.MeshStandardMaterial({ color: 0xe0a526, emissive: 0xb8860b, emissiveIntensity: 0.5, roughness: 0.6 });
-    const box = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.55, 0.55), mat);
-    group.add(box);
+    group.add(new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.55, 0.55), mat));
     const lid = new THREE.Mesh(new THREE.BoxGeometry(0.84, 0.14, 0.59), new THREE.MeshStandardMaterial({ color: 0x8a6b3a, roughness: 0.7 }));
     lid.position.y = 0.32;
     group.add(lid);
@@ -63,9 +63,22 @@ export function spawnPickup(scene, kind, x, z) {
   return pickup;
 }
 
+function downGuard(g, x, z) {
+  g.down = true;
+  g.downTimer = 30;
+  g.fig.group.rotation.x = Math.PI / 2;
+  spawnPickup(sceneRef, 'ammo', x, z);
+}
+
+function downOfficer(o) {
+  o.down = true;
+  o.downTimer = 20;
+  o.fig.group.rotation.x = Math.PI / 2;
+}
+
 export function initCombat(scene, city) {
   sceneRef = scene;
-  // Tracer line + muzzle flash, reused for every shot.
+  void city;
   const tracerGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
   tracer = new THREE.Line(tracerGeo, new THREE.LineBasicMaterial({ color: 0xffe9a8, transparent: true, opacity: 0 }));
   tracer.frustumCulled = false;
@@ -76,7 +89,6 @@ export function initCombat(scene, city) {
   );
   scene.add(flash);
 
-  // Pickups on sidewalks and the pier.
   const spots = [
     ['health', -24, 36], ['ammo', 36, -24], ['health', 96, 96], ['ammo', -96, -96],
     ['health', 156, -36], ['ammo', -156, 36], ['health', 36, 156], ['ammo', 216, 30],
@@ -84,7 +96,6 @@ export function initCombat(scene, city) {
   ];
   for (const [kind, x, z] of spots) spawnPickup(scene, kind, x, z);
 
-  // Warehouse guards around the Aurora lot (north-east blocks).
   const posts = [
     { x: 182, z: -178 }, { x: 196, z: -172 }, { x: 188, z: -192 }, { x: 172, z: -186 },
   ];
@@ -109,7 +120,6 @@ export function initCombat(scene, city) {
   on('punch', ({ x, z, heading }) => {
     const fx = Math.sin(heading);
     const fz = Math.cos(heading);
-    // Guards and officers first, then pedestrians.
     const targets = [];
     for (const g of G.guards) {
       if (!g.down) targets.push({ kind: 'guard', ref: g, x: g.fig.group.position.x, z: g.fig.group.position.z });
@@ -133,20 +143,11 @@ export function initCombat(scene, city) {
       } else if (t.kind === 'guard') {
         t.ref.health -= 14;
         t.ref.alerted = true;
-        if (t.ref.health <= 0) {
-          t.ref.down = true;
-          t.ref.downTimer = 30;
-          t.ref.fig.group.rotation.x = Math.PI / 2;
-          spawnPickup(sceneRef, 'ammo', t.x, t.z);
-        }
+        if (t.ref.health <= 0) downGuard(t.ref, t.x, t.z);
         reportCrime(x, z, 1);
       } else {
         t.ref.health -= 14;
-        if (t.ref.health <= 0) {
-          t.ref.down = true;
-          t.ref.downTimer = 20;
-          t.ref.fig.group.rotation.x = Math.PI / 2;
-        }
+        if (t.ref.health <= 0) downOfficer(t.ref);
         reportCrime(x, z, 2);
       }
       emit('hitLanded', { kind: t.kind });
@@ -169,7 +170,6 @@ function shoot() {
   const start = new THREE.Vector3(p.x + fx * 0.8, 1.45, p.z + fz * 0.8);
   let endDist = 42;
   let hitKind = null;
-  // Nearest target inside a narrow cone.
   const candidates = [];
   for (const ped of G.peds) {
     if (!ped.down) candidates.push({ kind: 'ped', ref: ped, x: ped.fig.group.position.x, z: ped.fig.group.position.z });
@@ -200,19 +200,10 @@ function shoot() {
     } else if (best.kind === 'guard') {
       best.ref.health -= 34;
       best.ref.alerted = true;
-      if (best.ref.health <= 0) {
-        best.ref.down = true;
-        best.ref.downTimer = 30;
-        best.ref.fig.group.rotation.x = Math.PI / 2;
-        spawnPickup(sceneRef, 'ammo', best.x, best.z);
-      }
+      if (best.ref.health <= 0) downGuard(best.ref, best.x, best.z);
     } else {
       best.ref.health -= 34;
-      if (best.ref.health <= 0) {
-        best.ref.down = true;
-        best.ref.downTimer = 20;
-        best.ref.fig.group.rotation.x = Math.PI / 2;
-      }
+      if (best.ref.health <= 0) downOfficer(best.ref);
     }
   }
   const end = new THREE.Vector3(p.x + fx * endDist, 1.35, p.z + fz * endDist);
@@ -257,7 +248,6 @@ export function tryShop() {
     if (G.audio) G.audio.cash();
     return { shop, msg: 'Patched up for $30. Feeling new.' };
   }
-  // Clinic: free slow heal, the respawn point after a bust.
   if (G.health >= G.maxHealth) return { shop, msg: 'The clinic has nothing to patch.' };
   G.health = G.maxHealth;
   return { shop, msg: 'The clinic patched you up, no charge.' };
@@ -270,14 +260,11 @@ export function updateCombat(dt, input) {
   if (tracer) tracer.material.opacity = tracerTimer > 0 ? 0.9 : 0;
   if (flash) flash.material.opacity = flashTimer > 0 ? 0.95 : 0;
 
-  // Click to shoot, on foot only, with a cooldown so a camera drag
-  // never turns into a burst.
   if (input.consumeClick() && !G.player.inCar && shotCooldown <= 0 && G.mode === 'playing') {
     shoot();
   }
   if (input.consume('KeyF')) G.player.punch();
 
-  // Pickups: bob, spin, magnet, collect, respawn.
   const p = G.player.pos();
   for (const pickup of G.pickups) {
     if (pickup.taken) {
@@ -311,7 +298,6 @@ export function updateCombat(dt, input) {
     }
   }
 
-  // Guards: patrol their post, chase and swing when alerted or provoked.
   for (const g of G.guards) {
     if (g.down) {
       g.downTimer -= dt;
@@ -321,7 +307,6 @@ export function updateCombat(dt, input) {
         g.alerted = false;
         g.fig.group.rotation.x = 0;
         g.fig.group.position.set(g.post.x, 0, g.post.z);
-        // Fresh guards forget old grudges; only the mission re-arms them.
         g.punchCooldown = 0;
       }
       continue;
@@ -337,8 +322,8 @@ export function updateCombat(dt, input) {
         const want = Math.atan2(p.x - gp.x, p.z - gp.z);
         g.heading = want;
         g.speed = 4.4;
-        let nx = gp.x + Math.sin(g.heading) * g.speed * dt;
-        let nz = gp.z + Math.cos(g.heading) * g.speed * dt;
+        const nx = gp.x + Math.sin(g.heading) * g.speed * dt;
+        const nz = gp.z + Math.cos(g.heading) * g.speed * dt;
         const res = G.city.collideCircle(nx, nz, 0.5);
         gp.x = res.x;
         gp.z = res.z;
@@ -351,7 +336,6 @@ export function updateCombat(dt, input) {
       }
       animateFigure(g.fig, g.speed, dt, { punch: g.punchCooldown > 0.7 ? 0.2 : 0 });
     } else {
-      // Idle patrol: slow loop around the post.
       const t = G.time * 0.25 + g.id * 1.7;
       const tx = g.post.x + Math.sin(t) * 5;
       const tz = g.post.z + Math.cos(t) * 5;
@@ -370,5 +354,4 @@ export function updateCombat(dt, input) {
     }
     g.fig.group.rotation.y = g.heading;
   }
-  void makeFigure;
 }

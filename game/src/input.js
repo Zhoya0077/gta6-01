@@ -1,6 +1,6 @@
-// Keyboard + mouse input with edge detection. The game polls held keys
-// every frame and consumes one-shot presses, so a tap never fires twice
-// and a held key never re-triggers an interaction.
+// Keyboard and mouse, with edge detection. Held keys are polled each
+// frame; one-shot presses are consumed exactly once, so a tap never
+// fires twice and holding E never re-triggers an interaction.
 
 export class Input {
   constructor() {
@@ -57,11 +57,13 @@ export class Input {
   }
 
   consumeClick() {
-    const c = this.clicked;
+    const was = this.clicked;
     this.clicked = false;
-    return c;
+    return was;
   }
 
+  // Drag deltas are consumed by the camera once per frame; leftover
+  // deltas never carry over, so a slow frame cannot spin the view.
   takeLook() {
     const yaw = this.yawDelta;
     const pitch = this.pitchDelta;
@@ -70,7 +72,7 @@ export class Input {
     return { yaw, pitch };
   }
 
-  // WASD as a -1..1 pair, screen-relative (forward = -Z on the map).
+  // WASD collapsed to a -1..1 pair, screen-relative.
   axes() {
     let x = 0;
     let y = 0;
@@ -85,8 +87,8 @@ export class Input {
     this.pressed.clear();
   }
 
-  // A drag only counts as a shot when the pointer barely moved, so
-  // orbiting the camera never fires the pistol by accident.
+  // Shooting reads the same click flag; combat's cooldown keeps a
+  // camera drag from ever becoming a burst of fire.
   consumeShot() {
     if (!this.clicked) return false;
     this.clicked = false;

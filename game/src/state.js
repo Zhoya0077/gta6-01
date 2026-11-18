@@ -1,6 +1,6 @@
-// Solmarina shared state: one object every system reads and writes, plus
-// a small event bus so crimes, pickups and mission beats can cross between
-// systems without import cycles.
+// The one shared state object. Every system reads and writes G, and a
+// tiny event bus lets a crime in one system wake up the police, the HUD
+// and the pedestrians without import cycles between modules.
 
 export const WORLD_HALF = 275;
 export const SHORE_X = 262;
@@ -44,6 +44,8 @@ export const G = {
   storyDone: false,
   missionCooldown: 0,
   stats: { carsStolen: 0, distanceKm: 0, crimes: 0, missionsDone: 0, busted: 0 },
+  // cameraTargetYaw is where the camera drifts back to while driving;
+  // cameraYaw is where it actually sits after drags and easing.
   cameraYaw: Math.PI,
   cameraPitch: 0.34,
   cameraDist: 7.5,
@@ -84,8 +86,8 @@ export function addShake(amount) {
   G.cameraShake = Math.min(0.6, G.cameraShake + amount);
 }
 
-// Daylight factor 0..1 derived from the clock, so lighting and the HUD
-// clock always agree. Night is 20:00-06:00, dusk peaks near 17:30.
+// How bright the day is, 0..1, read straight off the clock so the sky
+// and the HUD clock can never disagree. Night runs 20:00-06:00.
 export function daylightFactor() {
   const h = ((G.clockHours % 24) + 24) % 24;
   if (h >= 6 && h < 17) return 1;

@@ -1,40 +1,47 @@
-// Small pure helpers shared by every system: deterministic RNG, angles,
-// easing and formatting. Nothing here touches the scene or the DOM.
+// Pure little helpers every other system leans on: a seeded random
+// stream, angle math that never spins the long way round, easing, and
+// the text formatting the HUD prints. No scene, no DOM, no state here.
 
 export function mulberry32(seed) {
-  let a = seed >>> 0;
+  let acc = seed >>> 0;
   return function () {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    acc |= 0;
+    acc = (acc + 0x6d2b79f5) | 0;
+    let mixed = Math.imul(acc ^ (acc >>> 15), 1 | acc);
+    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
   };
 }
 
+// A friendly wrapper around one seeded stream. Only this object carries
+// range/int/pick/chance — a bare next() function has none of them, and
+// calling them on one used to throw every single frame.
 export function makeRng(seed) {
-  const next = mulberry32(seed);
+  const step = mulberry32(seed);
   return {
-    next,
-    range(min, max) { return min + next() * (max - min); },
-    int(min, max) { return Math.floor(min + next() * (max - min + 1)); },
-    pick(arr) { return arr[Math.floor(next() * arr.length)]; },
-    chance(p) { return next() < p; },
+    next: step,
+    range(lo, hi) { return lo + step() * (hi - lo); },
+    int(lo, hi) { return Math.floor(lo + step() * (hi - lo + 1)); },
+    pick(list) { return list[Math.floor(step() * list.length)]; },
+    chance(p) { return step() < p; },
   };
 }
 
-export function clamp(v, lo, hi) {
-  return v < lo ? lo : v > hi ? hi : v;
+export function clamp(value, lo, hi) {
+  if (value < lo) return lo;
+  if (value > hi) return hi;
+  return value;
 }
 
 export function lerp(a, b, t) {
   return a + (b - a) * t;
 }
 
-// Frame-rate independent smoothing: damp(current, target, rate, dt).
-export function damp(a, b, rate, dt) {
+// Smoothing that behaves the same at any frame rate: rate is the
+// "half-life" speed, so higher values settle visibly faster.
+export function damp(current, target, rate, dt) {
   const t = 1 - Math.exp(-rate * dt);
-  return a + (b - a) * t;
+  return current + (target - current) * t;
 }
 
 export function wrapAngle(a) {
@@ -59,8 +66,8 @@ export function dist2D(ax, az, bx, bz) {
 }
 
 export function easeOutCubic(t) {
-  const u = 1 - t;
-  return 1 - u * u * u;
+  const rest = 1 - t;
+  return 1 - rest * rest * rest;
 }
 
 export function formatMoney(n) {
@@ -74,11 +81,11 @@ export function formatClock(hours) {
 }
 
 export function formatTimer(sec) {
-  const s = Math.max(0, Math.ceil(sec));
-  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  const left = Math.max(0, Math.ceil(sec));
+  return Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0');
 }
 
-// Shortest signed turn from heading a toward target point, in radians.
+// Signed turn, in radians, from heading `heading` toward point (bx, bz).
 export function turnToward(ax, az, heading, bx, bz) {
   const want = Math.atan2(bx - ax, bz - az);
   return wrapAngle(want - heading);

@@ -1,8 +1,9 @@
-// The Solmarina police: interceptors that hunt in staggered formation and
-// officers who close in on foot. Heat rises with crimes, cools when Mara
-// breaks line of sight, and a long enough cornering ends in a bust.
+// The Solmarina police: interceptors hunting in staggered formation,
+// officers closing in on foot. Heat rises with every crime, cools when
+// Mara breaks away and stays quiet, and getting cornered ends in a
+// bust. Units spawn just out of view and retire farthest-first, so the
+// chase thins naturally instead of popping out of sight.
 
-import * as THREE from 'three';
 import { G, emit } from './state.js';
 import { makeOfficer, animateFigure } from './characters.js';
 import { createCar, moveCar } from './vehicles.js';
@@ -107,7 +108,6 @@ export function updatePolice(dt) {
   const p = player.pos();
   const playerSpeed = player.inCar ? Math.abs(player.inCar.speed) : player.walkSpeed;
 
-  // Keep the force matched to the wanted level, spawning just out of view.
   const want = desiredUnits(G.wanted);
   const cars = policeCars();
   if (cars.length < want.cars && G.wanted > 0) {
@@ -118,7 +118,6 @@ export function updatePolice(dt) {
     const res = G.city.collideCircle(x, z, 2);
     spawnInterceptor(res.x, res.z, Math.atan2(p.x - res.x, p.z - res.z), 8);
   } else if (cars.length > want.cars) {
-    // Retire the farthest unit first so the chase thins naturally.
     let farthest = null;
     let farD = -1;
     for (const car of cars) {
@@ -139,7 +138,7 @@ export function updatePolice(dt) {
     if (far) removeOfficer(far);
   }
 
-  // Evade: out of sight and quiet, heat cools one star at a time.
+  // Evade: far away and quiet for long enough, and the heat drops a star.
   let nearestPolice = Infinity;
   for (const car of policeCars()) {
     nearestPolice = Math.min(nearestPolice, Math.hypot(car.mesh.position.x - p.x, car.mesh.position.z - p.z));
@@ -160,7 +159,7 @@ export function updatePolice(dt) {
     }
   }
 
-  // Interceptors: predict, offset, and cut off — never a conga line.
+  // Interceptors predict Mara's line, offset to the side and cut her off.
   for (const car of policeCars()) {
     const pol = car.police || { aggression: 0.85, offset: 0, lane: 1 };
     const cp = car.mesh.position;
@@ -176,13 +175,13 @@ export function updatePolice(dt) {
     const prevHealth = car.health;
     moveCar(car, dt, G.city, G.cars);
     if (car.health < prevHealth - 0.5 && G.audio) G.audio.crash(4);
-    // A hard ram shakes Mara's camera when it lands on her car.
     if (player.inCar && Math.hypot(cp.x - p.x, cp.z - p.z) < 4 && Math.abs(car.speed) > 10) {
       G.cameraShake = Math.min(0.5, G.cameraShake + dt * 2);
     }
   }
 
-  // Officers on foot: run the player down, swing, and corner for a bust.
+  // Officers run Mara down, swing, and hold her for a bust when she
+  // stops moving in their reach.
   let cornered = false;
   for (const o of [...G.officers]) {
     if (o.down) {
@@ -197,8 +196,8 @@ export function updatePolice(dt) {
       const want = Math.atan2(p.x - op.x, p.z - op.z);
       o.heading = angleDamp(o.heading, want, 8, dt);
       o.speed = 5.6;
-      let nx = op.x + Math.sin(o.heading) * o.speed * dt;
-      let nz = op.z + Math.cos(o.heading) * o.speed * dt;
+      const nx = op.x + Math.sin(o.heading) * o.speed * dt;
+      const nz = op.z + Math.cos(o.heading) * o.speed * dt;
       const res = G.city.collideCircle(nx, nz, 0.5);
       op.x = res.x;
       op.z = res.z;
@@ -223,10 +222,8 @@ export function updatePolice(dt) {
   } else {
     bustedTimer = Math.max(0, bustedTimer - dt * 2);
   }
-  void THREE;
 }
 
-// Search state for the HUD: cooling down reads as "evading" on screen.
 export function isEvading() {
   return G.wanted > 0 && G.evadeTimer > 1.5;
 }
