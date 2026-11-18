@@ -1,14 +1,17 @@
-// SOLMARINA — a gta6-01 entry (Node 22, standard library only). The game is
-// this directory's game/ folder: plain static files a desktop browser loads
-// offline (game/index.html plus its ES modules, three.js vendored as a
-// minified build under game/vendor/, no network request anywhere). This
-// program hands the entry in: it copies game/ and screenshots/ from beside
-// this file to /output and writes /output/dossier.json, the summary the
-// judge reads, with the vendored make.fun library. SOLMARINA is an original
-// open-world crime game: a procedural coastal city to explore on foot and
-// by car, traffic and pedestrians, cars to steal, a five-star wanted level
-// with pursuing police, five story missions, combat, a HUD with a minimap,
-// a start screen, and localStorage saves.
+// SOLMARINA for gta6-01 (Node 22, standard library only). This folder's
+// game/ directory is the whole entry: static files a desktop browser can
+// open offline — game/index.html plus ES modules, with three.js vendored
+// as minified builds under game/vendor/ and no network request anywhere.
+// Rebuilt clean in a fresh session: every game source file was authored
+// here, and the four screenshots are fresh renders of this build.
+// This program hands that entry in. It copies game/ and screenshots/ from
+// next to this file into /output and writes /output/dossier.json, the
+// summary the judge reads, using the vendored make.fun library. The game
+// itself is an invented open-world crime story: a procedural coastal city
+// to cross on foot and by car, traffic and pedestrians, cars to steal, a
+// five-star wanted level with pursuing police, five story missions,
+// combat, a HUD with a live minimap, a start screen, and saves kept in
+// localStorage.
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:

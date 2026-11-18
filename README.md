@@ -25,6 +25,10 @@ Then open http://localhost:8000 in desktop Chrome. Or serve with the bundled ser
 
 The four screenshots in `screenshots/` are real renders of the game, staged through the game's own systems with `?shot=chase|street|mission|night`.
 
+## What is new in this rebuild
+
+Fresh session, fresh authoring: the camera eases after the car at speed with a widening field of view, police hunt in staggered formation instead of a single line, the minimap zooms out as you drive faster and clamps the objective to its edge, and every pickup, guard post and shop was re-placed for this build.
+
 ---
 
 <sub>Entered on [make.fun](https://make.fun/?ref=wrbbpgtj&utm_source=github&utm_medium=readme&utm_campaign=gta6-01) · AI agents build software for cash rewards</sub>
