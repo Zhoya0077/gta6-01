@@ -1,242 +1,188 @@
-// Mara Voss, the player: on-foot movement with a third-person orbit
-// camera, jumping, entering and stealing cars, exiting, taking damage, and
-// the E-key interactions (cars, shops, mission pickups).
+// Mara on foot and behind the wheel: camera-relative movement, run and
+// jump, entering and stealing cars, and the handoff to driving physics.
+// The camera target is always Mara or her car, never a free orbit.
 
-import * as THREE from 'three';
-import { G, emit } from './state.js';
-import { clamp, damp, angleLerp, angleDiff, resolveColliders, dist2 } from './util.js';
-import { clampToWorld } from './city.js';
-import { makeHumanoid, animateHumanoid } from './characters.js';
-import { nearestCar } from './vehicles.js';
+import { G, emit, addShake } from './state.js';
+import { makeMara, animateFigure } from './characters.js';
+import { clamp, angleDamp, damp } from './util.js';
+import { drivePlayerCar, moveCar, carDistance } from './vehicles.js';
 
-const WALK_SPEED = 6;
-const RUN_SPEED = 10.5;
-const GRAVITY = 24;
+export class Player {
+  constructor(scene) {
+    this.fig = makeMara();
+    scene.add(this.fig.group);
+    this.fig.group.position.set(-30, 0, 30);
+    this.heading = Math.PI;
+    this.velY = 0;
+    this.onGround = true;
+    this.inCar = null;
+    this.walkSpeed = 0;
+    this.punchTimer = 0;
+    this.punchCooldown = 0;
+    this.hurtTimer = 0;
+    this.visible = true;
+  }
 
-export function createPlayer(scene) {
-  const fig = makeHumanoid({
-    shirt: 0xd94f4f, pants: 0x2e4057, skin: 0xe0ac69, hair: 0x2b1d16,
-    hat: 'cap', hatColor: 0xcc3333, pistol: true, rng: G.rng,
-  });
-  fig.group.position.set(G.city.locations.spawn.x, 0, G.city.locations.spawn.z);
-  scene.add(fig.group);
+  pos() {
+    const p = this.inCar ? this.inCar.mesh.position : this.fig.group.position;
+    return { x: p.x, z: p.z };
+  }
 
-  const player = {
-    fig,
-    heading: Math.PI,
-    vy: 0,
-    onGround: true,
-    walkPhase: 0,
-    speedNorm: 0,
-    punchTimer: 0,
-    invulnTimer: 0,
-    inCar: false,
-    car: null,
-    lastDragTime: -10,
-    dead: false,
-  };
+  // Eye height for camera targets and police line checks.
+  headPos() {
+    const p = this.pos();
+    return { x: p.x, y: this.inCar ? 1.6 : 1.7, z: p.z };
+  }
 
-  player.position = function position() {
-    return fig.group.position;
-  };
+  teleport(x, z, heading) {
+    if (this.inCar) this.exitCar(true);
+    this.fig.group.position.set(x, 0, z);
+    if (heading !== undefined) this.heading = heading;
+    this.fig.group.rotation.y = this.heading;
+    this.velY = 0;
+  }
 
-  player.teleport = function teleport(x, z, heading) {
-    if (player.inCar && player.car) player.exitCar();
-    fig.group.position.set(x, 0, z);
-    if (heading !== undefined) player.heading = heading;
-    player.vy = 0;
-  };
-
-  player.enterCar = function enterCar(car) {
-    const wasTraffic = car.driver === 'traffic';
+  enterCar(car) {
+    if (this.inCar) return;
     const wasParked = car.driver === 'parked';
+    const wasTraffic = car.driver === 'traffic';
     car.driver = 'player';
-    player.inCar = true;
-    player.car = car;
-    fig.group.visible = false;
-    if (G.audio) G.audio.doorSlam();
-    if (wasTraffic || wasParked) {
+    car.traffic = null;
+    this.inCar = car;
+    this.fig.group.visible = false;
+    if (wasParked || wasTraffic) {
       G.stats.carsStolen++;
-      emit('carStolen', { car, wasTraffic });
-      emit('crime', { kind: 'steal', amount: 1, x: car.mesh.position.x, z: car.mesh.position.z });
+      emit('carStolen', { car });
     }
-    emit('enteredCar', { car });
-  };
+    if (G.audio) G.audio.door();
+  }
 
-  player.exitCar = function exitCar() {
-    const car = player.car;
+  exitCar(silent) {
+    const car = this.inCar;
     if (!car) return;
     car.driver = 'parked';
     car.speed = 0;
-    player.inCar = false;
-    player.car = null;
-    // Step out on the left side of the car.
-    const sideX = Math.cos(car.heading);
-    const sideZ = -Math.sin(car.heading);
-    fig.group.position.set(
-      car.mesh.position.x + sideX * 2.4,
-      0,
-      car.mesh.position.z + sideZ * 2.4,
-    );
-    resolveColliders(fig.group.position, 0.5, G.city.colliders);
-    clampToWorld(fig.group.position, 0.5);
-    player.heading = car.heading;
-    fig.group.visible = true;
-    if (G.audio) G.audio.doorSlam();
-    emit('exitedCar', { car });
-  };
+    this.inCar = null;
+    const side = car.heading + Math.PI / 2;
+    const x = car.mesh.position.x + Math.sin(side) * 2.4;
+    const z = car.mesh.position.z + Math.cos(side) * 2.4;
+    const res = G.city.collideCircle(x, z, 0.5);
+    this.fig.group.position.set(res.x, 0, res.z);
+    this.heading = car.heading;
+    this.fig.group.rotation.y = this.heading;
+    this.fig.group.visible = true;
+    if (!silent && G.audio) G.audio.door();
+  }
 
-  player.damage = function damage(amount, source) {
-    if (player.dead || player.invulnTimer > 0) return;
-    player.invulnTimer = 0.25;
+  nearestCar(maxDist) {
+    let best = null;
+    let bestD = maxDist;
+    const p = this.pos();
+    for (const car of G.cars) {
+      if (car.driver === 'police') continue;
+      if (car.police) continue;
+      const d = carDistance(car, p.x, p.z);
+      if (d < bestD) { bestD = d; best = car; }
+    }
+    return best;
+  }
+
+  punch() {
+    if (this.punchCooldown > 0 || this.inCar) return false;
+    this.punchTimer = 0.28;
+    this.punchCooldown = 0.45;
+    emit('punch', { x: this.fig.group.position.x, z: this.fig.group.position.z, heading: this.heading });
+    if (G.audio) G.audio.punch();
+    return true;
+  }
+
+  hurt(amount, fromX, fromZ) {
+    if (this.hurtTimer > 0) return;
+    this.hurtTimer = 0.5;
     G.health = Math.max(0, G.health - amount);
-    emit('playerDamaged', { amount, source });
-    if (G.health <= 0) {
-      player.dead = true;
-      emit('playerDown', { source });
-    }
-  };
+    addShake(0.25);
+    emit('playerHurt', { amount });
+    if (G.audio) G.audio.hurt();
+    if (G.health <= 0) emit('playerDown', {});
+  }
 
-  player.heal = function heal(amount) {
-    G.health = Math.min(G.maxHealth, G.health + amount);
-  };
+  update(dt, input) {
+    this.punchCooldown = Math.max(0, this.punchCooldown - dt);
+    this.punchTimer = Math.max(0, this.punchTimer - dt);
+    this.hurtTimer = Math.max(0, this.hurtTimer - dt);
+    const axes = input.axes();
 
-  // What the E key would do right now, for the prompt line. Returns
-  // { text, run } or null.
-  player.getInteract = function getInteract() {
-    if (player.inCar) {
-      if (player.car && Math.abs(player.car.speed) < 3) {
-        return { text: 'Exit ' + player.car.name, run: () => player.exitCar() };
+    if (this.inCar) {
+      const car = this.inCar;
+      const handbrake = input.held('Space');
+      const slipping = drivePlayerCar(car, axes, dt, handbrake);
+      const before = { x: car.mesh.position.x, z: car.mesh.position.z };
+      const prevHealth = car.health;
+      moveCar(car, dt, G.city, G.cars);
+      const moved = Math.hypot(car.mesh.position.x - before.x, car.mesh.position.z - before.z);
+      G.stats.distanceKm += moved / 1000;
+      if (car.health < prevHealth - 1 && G.audio) G.audio.crash(Math.abs(car.speed));
+      if (car.health <= 0) {
+        // Wrecked: Mara climbs out, the car stays dead where it stopped.
+        this.exitCar(true);
+        emit('carWrecked', { car });
       }
-      return null;
-    }
-    const pos = fig.group.position;
-    // Mission interactable first (collect, pick up, deliver).
-    if (G.missionInteract) {
-      const mi = G.missionInteract;
-      if (dist2(pos.x, pos.z, mi.x, mi.z) < mi.radius) {
-        return { text: mi.text, run: mi.run };
+      // Camera follows the car's heading when driving fast.
+      if (Math.abs(car.speed) > 6) {
+        G.cameraTargetYaw = car.heading + Math.PI;
       }
-    }
-    // Shops: clinic and gun store.
-    for (const zone of G.interactZones) {
-      if (dist2(pos.x, pos.z, zone.x, zone.z) < zone.radius) {
-        return { text: zone.text(), run: zone.run };
-      }
-    }
-    // Nearest car.
-    const car = nearestCar(pos.x, pos.z, 4.5, null);
-    if (car) {
-      const verb = car.driver === 'traffic' ? 'Steal' : car.driver === 'parked' ? 'Take' : 'Enter';
-      return { text: verb + ' ' + car.name, run: () => player.enterCar(car) };
-    }
-    return null;
-  };
-
-  player.update = function update(dt) {
-    const input = G.input;
-    player.invulnTimer = Math.max(0, player.invulnTimer - dt);
-    player.punchTimer = Math.max(0, player.punchTimer - dt);
-
-    // Camera orbit from mouse drag / pointer lock, and arrow keys.
-    if (input.mouseDX !== 0 || input.mouseDY !== 0) {
-      player.lastDragTime = G.time;
-      G.cameraYaw -= input.mouseDX * 0.0032;
-      G.cameraPitch = clamp(G.cameraPitch + input.mouseDY * 0.0022, 0.06, 1.05);
-    }
-    if (input.keys.has('turnLeft')) G.cameraYaw += 1.9 * dt;
-    if (input.keys.has('turnRight')) G.cameraYaw -= 1.9 * dt;
-    if (input.wheel !== 0) {
-      G.cameraDist = clamp(G.cameraDist + input.wheel * 0.7, 4, 11);
+      G.fovKick = damp(G.fovKick, clamp(Math.abs(car.speed) / 36, 0, 1) * 8, 3, dt);
+      return { driving: true, speed: car.speed, slipping };
     }
 
-    if (player.inCar && player.car) {
-      updateDriving(dt);
-    } else {
-      updateOnFoot(dt);
-    }
-    updateCamera(dt);
-  };
-
-  function updateOnFoot(dt) {
-    const input = G.input;
-    const pos = fig.group.position;
-    // Move relative to the camera's facing.
-    const fwdX = Math.sin(G.cameraYaw);
-    const fwdZ = Math.cos(G.cameraYaw);
-    const leftX = Math.cos(G.cameraYaw);
-    const leftZ = -Math.sin(G.cameraYaw);
+    // On foot: move relative to the camera yaw.
+    const camYaw = G.cameraYaw;
     let mx = 0;
     let mz = 0;
-    if (input.keys.has('up')) { mx += fwdX; mz += fwdZ; }
-    if (input.keys.has('down')) { mx -= fwdX; mz -= fwdZ; }
-    if (input.keys.has('left')) { mx += leftX; mz += leftZ; }
-    if (input.keys.has('right')) { mx -= leftX; mz -= leftZ; }
-    const len = Math.hypot(mx, mz);
-    const running = input.keys.has('run');
-    const speed = running ? RUN_SPEED : WALK_SPEED;
-    if (len > 0.01) {
+    if (axes.y !== 0 || axes.x !== 0) {
+      const sin = Math.sin(camYaw);
+      const cos = Math.cos(camYaw);
+      // Forward on screen is away from the camera.
+      mx = -sin * axes.y + -cos * axes.x;
+      mz = -cos * axes.y + sin * axes.x;
+      const len = Math.hypot(mx, mz);
       mx /= len;
       mz /= len;
-      const targetHeading = Math.atan2(mx, mz);
-      player.heading = angleLerp(player.heading, targetHeading, 1 - Math.exp(-12 * dt));
-      pos.x += mx * speed * dt;
-      pos.z += mz * speed * dt;
-      player.walkPhase += speed * dt * 1.7;
-      player.speedNorm = damp(player.speedNorm, running ? 1 : 0.62, 8, dt);
-      G.stats.distanceKm += (speed * dt) / 1000;
-    } else {
-      player.speedNorm = damp(player.speedNorm, 0, 10, dt);
-      player.walkPhase += dt * 1.2; // idle breathing
     }
-
+    const running = input.held('ShiftLeft') || input.held('ShiftRight');
+    const targetSpeed = (axes.x !== 0 || axes.y !== 0) ? (running ? 8.2 : 4.6) : 0;
+    this.walkSpeed = damp(this.walkSpeed, targetSpeed, 10, dt);
+    if (this.walkSpeed > 0.2) {
+      const wantHeading = Math.atan2(mx, mz);
+      this.heading = angleDamp(this.heading, wantHeading, 12, dt);
+      let nx = this.fig.group.position.x + mx * this.walkSpeed * dt;
+      let nz = this.fig.group.position.z + mz * this.walkSpeed * dt;
+      const res = G.city.collideCircle(nx, nz, 0.5);
+      nx = res.x;
+      nz = res.z;
+      this.fig.group.position.x = nx;
+      this.fig.group.position.z = nz;
+      G.stats.distanceKm += this.walkSpeed * dt / 1000;
+    }
     // Jump + gravity.
-    if (input.wasPressed('jump') && player.onGround) {
-      player.vy = 8.5;
-      player.onGround = false;
+    if (input.consume('Space') && this.onGround) {
+      this.velY = 7.5;
+      this.onGround = false;
     }
-    if (!player.onGround) {
-      player.vy -= GRAVITY * dt;
-      pos.y += player.vy * dt;
-      if (pos.y <= 0) {
-        pos.y = 0;
-        player.vy = 0;
-        player.onGround = true;
-      }
+    if (!this.onGround) {
+      this.velY -= 22 * dt;
+      let y = this.fig.group.position.y + this.velY * dt;
+      if (y <= 0) { y = 0; this.velY = 0; this.onGround = true; }
+      this.fig.group.position.y = y;
     }
-
-    resolveColliders(pos, 0.5, G.city.colliders);
-    clampToWorld(pos, 0.5);
-    fig.group.rotation.y = player.heading;
-    animateHumanoid(fig, player.walkPhase, player.speedNorm, player.punchTimer > 0 ? 1 - player.punchTimer / 0.35 : 0);
+    this.fig.group.rotation.y = this.heading;
+    const aiming = input.held('MouseLeft') || false;
+    animateFigure(this.fig, this.walkSpeed, dt, {
+      punch: this.punchTimer,
+      aim: aiming && G.ammo > 0,
+    });
+    this.fig.gun.visible = G.ammo > 0;
+    G.fovKick = damp(G.fovKick, 0, 4, dt);
+    return { driving: false, speed: this.walkSpeed, slipping: false };
   }
-
-  function updateDriving(dt) {
-    const input = G.input;
-    const car = player.car;
-    // While driving, the camera eases back behind the car unless the
-    // player has dragged it recently.
-    if (G.time - player.lastDragTime > 1.2) {
-      G.cameraYaw = angleLerp(G.cameraYaw, car.heading, 1 - Math.exp(-2.2 * dt));
-    }
-    // Keep the hidden player mesh glued to the car for the minimap.
-    fig.group.position.copy(car.mesh.position);
-    fig.group.rotation.y = car.heading;
-  }
-
-  function updateCamera(dt) {
-    const cam = G.camera;
-    const focus = player.inCar && player.car
-      ? player.car.mesh.position
-      : fig.group.position;
-    const pitch = player.inCar ? Math.max(0.18, G.cameraPitch * 0.8) : G.cameraPitch;
-    const dist = player.inCar ? G.cameraDist + 2.5 : G.cameraDist;
-    const cx = focus.x - Math.sin(G.cameraYaw) * Math.cos(pitch) * dist;
-    const cz = focus.z - Math.cos(G.cameraYaw) * Math.cos(pitch) * dist;
-    const cy = focus.y + 1.6 + Math.sin(pitch) * dist;
-    cam.position.set(cx, Math.max(1.1, cy), cz);
-    cam.lookAt(focus.x, focus.y + 1.5, focus.z);
-  }
-
-  return player;
 }

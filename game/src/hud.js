@@ -1,231 +1,190 @@
-// The heads-up display: cash, health, ammo, wanted stars, clock, mission
-// objective, drive readout, prompts, phone messages, toasts and big
-// announcements, plus the menu / pause / busted / complete screens.
+// HUD and screens: cash, health, ammo, wanted stars, clock, district,
+// objective chip, drive readout, phone messages, toasts, announcements,
+// prompts, and the menu / pause / busted / complete overlays. All DOM,
+// updated from state every frame, with pulses on every change that hurts.
 
 import { G, on } from './state.js';
-import { clamp, formatClock, formatMoney } from './util.js';
-import { districtAt } from './city.js';
+import { formatMoney, formatClock, formatTimer } from './util.js';
+import { isEvading } from './police.js';
 
-const el = {};
-let lastStars = -1;
+const $ = (id) => document.getElementById(id);
+let els = {};
 let lastCash = -1;
+let lastHealth = -1;
 let lastAmmo = -1;
-let lastObjective = '';
+let lastWanted = -1;
 let toastTimer = 0;
 let announceTimer = 0;
-let flashTimer = 0;
-let phoneQueue = [];
-let hintShown = 0;
+let hintFade = 0;
+let damageTimer = 0;
 
 export function initHud() {
-  const ids = [
-    'hud', 'cash', 'health-fill', 'ammo', 'stars', 'clock', 'district',
-    'mission-name', 'objective-text', 'objective-sub', 'mission-timer',
-    'drive-box', 'speed', 'car-name', 'car-health-fill',
-    'prompt', 'prompt-text', 'hint', 'phone', 'toast', 'toast-text',
-    'announce', 'announce-sub', 'crosshair', 'damage-flash', 'fade-black',
-    'menu', 'pause', 'busted', 'complete', 'busted-stats', 'complete-stats',
-    'btn-new', 'btn-continue', 'btn-resume', 'btn-mute', 'btn-quit-menu',
-    'btn-busted-respawn', 'btn-continue-playing', 'loading',
-  ];
-  for (const id of ids) el[id] = document.getElementById(id);
-
-  on('toast', (data) => {
-    el['toast-text'].textContent = data.text;
-    el.toast.classList.add('on');
-    toastTimer = 2.6;
+  els = {
+    hud: $('hud'), cash: $('cash'), healthFill: $('health-fill'), ammo: $('ammo'),
+    stars: $('stars'), clock: $('clock'), district: $('district'),
+    missionName: $('mission-name'), objectiveText: $('objective-text'),
+    objectiveSub: $('objective-sub'), missionTimer: $('mission-timer'),
+    driveBox: $('drive-box'), speed: $('speed'), carName: $('car-name'),
+    carHealthFill: $('car-health-fill'),
+    prompt: $('prompt'), promptText: $('prompt-text'), hint: $('hint'),
+    phone: $('phone'), toast: $('toast'), toastText: $('toast-text'),
+    announce: $('announce'), announceSub: $('announce-sub'),
+    crosshair: $('crosshair'), damageFlash: $('damage-flash'), fadeBlack: $('fade-black'),
+    menu: $('menu'), pause: $('pause'), busted: $('busted'), complete: $('complete'),
+  };
+  on('playerHurt', () => { damageTimer = 0.35; });
+  on('wantedChanged', ({ wanted }) => {
+    if (wanted > lastWanted) showToast(wanted >= 3 ? 'The whole city is looking for you.' : 'The police are onto you.');
   });
-  on('announce', (data) => {
-    el.announce.textContent = data.text;
-    el['announce-sub'].textContent = data.sub || '';
-    el.announce.classList.add('on');
-    el['announce-sub'].classList.add('on');
-    announceTimer = 3;
-  });
-  on('phone', (data) => {
-    phoneQueue.push({ from: data.from, text: data.text, at: G.time + (data.delay || 0) });
-    if (G.audio) G.audio.phoneBuzz();
-  });
-  on('playerDamaged', () => {
-    flashTimer = 0.35;
-    el['damage-flash'].style.opacity = '1';
-  });
-  on('wantedChanged', () => {
-    lastStars = -1; // force a stars redraw
-  });
+  on('pickup', ({ kind }) => showToast(kind === 'health' ? '+30 health' : '+12 rounds'));
+  on('evaded', ({ wanted }) => showToast(wanted === 0 ? 'You lost them. Breathe.' : 'Heat cooling… ' + wanted + ' star' + (wanted === 1 ? '' : 's') + ' left.'));
+  on('carStolen', () => showToast('Car stolen. Drive like you own it.'));
+  on('missionComplete', ({ reward }) => { pulse(els.cash); void reward; });
 }
 
-export function showHud(show) {
-  el.hud.classList.toggle('on', show);
+function pulse(el) {
+  if (!el) return;
+  el.style.transform = 'scale(1.12)';
+  el.style.transition = 'transform 0.1s ease';
+  setTimeout(() => { el.style.transform = ''; }, 130);
+}
+
+export function showToast(text) {
+  if (!els.toast) return;
+  els.toastText.textContent = text;
+  els.toast.classList.add('on');
+  toastTimer = 3.2;
+}
+
+export function announce(title, sub) {
+  if (!els.announce) return;
+  els.announce.textContent = title;
+  els.announceSub.textContent = sub || '';
+  els.announce.classList.add('on');
+  els.announceSub.classList.add('on');
+  announceTimer = 2.6;
+}
+
+export function phoneMessage(from, text) {
+  if (!els.phone) return;
+  const div = document.createElement('div');
+  div.className = 'phone-msg';
+  const b = document.createElement('b');
+  b.textContent = from + '  ';
+  div.appendChild(b);
+  div.appendChild(document.createTextNode(text));
+  els.phone.appendChild(div);
+  while (els.phone.children.length > 3) els.phone.removeChild(els.phone.firstChild);
+  setTimeout(() => {
+    if (div.parentNode) div.parentNode.removeChild(div);
+  }, 9000);
+}
+
+export function setObjective(name, text, sub) {
+  if (!els.missionName) return;
+  els.missionName.textContent = name;
+  els.objectiveText.textContent = text;
+  els.objectiveSub.textContent = sub || '';
+}
+
+export function setPrompt(html) {
+  if (!els.prompt) return;
+  if (!html) {
+    els.prompt.classList.remove('on');
+    return;
+  }
+  els.promptText.textContent = html;
+  els.prompt.classList.add('on');
 }
 
 export function showScreen(name) {
   for (const key of ['menu', 'pause', 'busted', 'complete']) {
-    el[key].classList.toggle('on', key === name);
+    if (els[key]) els[key].classList.toggle('on', key === name);
   }
-}
-
-export function hideLoading() {
-  el.loading.classList.add('done');
-}
-
-export function setBustedStats(html) {
-  el['busted-stats'].innerHTML = html;
-}
-
-export function setCompleteStats(html) {
-  el['complete-stats'].innerHTML = html;
+  if (els.hud) els.hud.classList.toggle('on', name === null && G.mode === 'playing');
 }
 
 export function fadeBlack(onOff) {
-  el['fade-black'].classList.toggle('on', onOff);
+  if (els.fadeBlack) els.fadeBlack.classList.toggle('on', onOff);
 }
 
-function renderStars() {
-  if (G.wanted === lastStars) return;
-  lastStars = G.wanted;
-  let html = '';
-  for (let i = 0; i < 5; i++) {
-    html += i < G.wanted ? '<span class="lit">★</span>' : '<span class="dim">★</span>';
-  }
-  el.stars.innerHTML = html;
+export function setBustedStats(html) {
+  const el = $('busted-stats');
+  if (el) el.innerHTML = html;
 }
 
-function updatePhone(dt) {
-  // Deliver queued messages whose delay has elapsed.
-  for (let i = phoneQueue.length - 1; i >= 0; i--) {
-    if (G.time >= phoneQueue[i].at) {
-      const msg = phoneQueue.splice(i, 1)[0];
-      const div = document.createElement('div');
-      div.className = 'phone-msg';
-      const who = document.createElement('b');
-      who.textContent = msg.from + ': ';
-      div.appendChild(who);
-      div.appendChild(document.createTextNode(msg.text));
-      el.phone.appendChild(div);
-      // Keep the thread short: drop the oldest bubble past three.
-      while (el.phone.children.length > 3) el.phone.removeChild(el.phone.firstChild);
-      setTimeout(() => {
-        if (div.parentNode) div.parentNode.removeChild(div);
-      }, 11000);
-    }
-  }
+export function setCompleteStats(html) {
+  const el = $('complete-stats');
+  if (el) el.innerHTML = html;
 }
 
 export function updateHud(dt) {
-  if (!el.hud) return;
-  renderStars();
+  if (!els.hud) return;
+  toastTimer = Math.max(0, toastTimer - dt);
+  if (toastTimer <= 0) els.toast.classList.remove('on');
+  announceTimer = Math.max(0, announceTimer - dt);
+  if (announceTimer <= 0) {
+    els.announce.classList.remove('on');
+    els.announceSub.classList.remove('on');
+  }
+  damageTimer = Math.max(0, damageTimer - dt);
+  els.damageFlash.style.opacity = damageTimer > 0 ? '1' : '0';
+  // Hint fades after the first minute of play.
+  hintFade += dt;
+  if (els.hint) els.hint.style.opacity = hintFade > 60 ? '0' : '1';
 
   if (G.cash !== lastCash) {
+    if (lastCash >= 0 && G.cash < lastCash) pulse(els.cash);
+    els.cash.textContent = formatMoney(G.cash);
     lastCash = G.cash;
-    el.cash.textContent = formatMoney(G.cash).slice(1); // the $ comes from CSS
   }
-  const healthPct = clamp(G.health / G.maxHealth, 0, 1);
-  el['health-fill'].style.width = (healthPct * 100).toFixed(1) + '%';
-  el['health-fill'].style.background = healthPct > 0.5
-    ? 'linear-gradient(90deg, #57d977, #b8e356)'
-    : healthPct > 0.25
-      ? 'linear-gradient(90deg, #e0a83b, #ffd54a)'
-      : 'linear-gradient(90deg, #d94f4f, #ff8a80)';
+  if (G.health !== lastHealth) {
+    els.healthFill.style.width = Math.max(0, (G.health / G.maxHealth) * 100) + '%';
+    els.healthFill.style.background = G.health < 30
+      ? 'linear-gradient(90deg, #e53935, #ff7043)'
+      : 'linear-gradient(90deg, #57d977, #b8e356)';
+    if (lastHealth >= 0 && G.health < lastHealth) pulse(els.healthFill);
+    lastHealth = G.health;
+  }
   if (G.ammo !== lastAmmo) {
+    els.ammo.textContent = G.ammo;
     lastAmmo = G.ammo;
-    el.ammo.textContent = String(G.ammo);
   }
-  el.clock.textContent = formatClock(G.clockHours);
-
-  const player = G.player;
-  if (player) {
-    const pos = player.position();
-    el.district.textContent = districtAt(pos.x, pos.z);
+  if (G.wanted !== lastWanted) {
+    let html = '';
+    for (let i = 0; i < 5; i++) {
+      html += '<span class="' + (i < G.wanted ? 'lit' : 'dim') + '">★</span>';
+    }
+    els.stars.innerHTML = html;
+    if (lastWanted >= 0 && G.wanted > lastWanted) pulse(els.stars);
+    lastWanted = G.wanted;
   }
-
-  // Objective block.
-  const obj = G.objective;
-  if (obj) {
-    const key = obj.name + '|' + obj.text + '|' + obj.sub;
-    if (key !== lastObjective) {
-      lastObjective = key;
-      el['mission-name'].textContent = obj.name;
-      el['objective-text'].textContent = obj.text;
-      el['objective-sub'].textContent = obj.sub;
-    }
-    if (obj.pos && player) {
-      const pos = player.position();
-      const d = Math.hypot(obj.pos.x - pos.x, obj.pos.z - pos.z);
-      el['objective-sub'].textContent = obj.sub + (obj.sub ? '  ·  ' : '') + Math.round(d) + 'm';
-    }
+  els.clock.textContent = formatClock(G.clockHours);
+  if (G.city && G.player) {
+    const p = G.player.pos();
+    const district = G.city.districtAt(p.x, p.z);
+    const evading = isEvading();
+    els.district.textContent = (evading ? 'EVADING • ' : '') + district;
   }
   if (G.missionTimer > 0) {
-    el['mission-timer'].textContent = Math.ceil(G.missionTimer) + 's';
-    el['mission-timer'].classList.add('on');
+    els.missionTimer.textContent = formatTimer(G.missionTimer);
+    els.missionTimer.classList.add('on');
   } else {
-    el['mission-timer'].classList.remove('on');
+    els.missionTimer.classList.remove('on');
   }
-
   // Drive readout.
-  if (player && player.inCar && player.car) {
-    el['drive-box'].classList.add('on');
-    el.speed.textContent = String(Math.round(Math.abs(player.car.speed) * 2.2));
-    el['car-name'].textContent = player.car.name;
-    el['car-health-fill'].style.width = (clamp(player.car.health / player.car.maxHealth, 0, 1) * 100).toFixed(0) + '%';
+  if (G.player && G.player.inCar) {
+    const car = G.player.inCar;
+    els.driveBox.classList.add('on');
+    els.speed.textContent = Math.round(Math.abs(car.speed) * 2.2);
+    els.carName.textContent = car.def.name + (car.storyCar ? '  •  STOLEN' : '');
+    els.carHealthFill.style.width = Math.max(0, (car.health / car.maxHealth) * 100) + '%';
+    els.crosshair.classList.remove('on');
   } else {
-    el['drive-box'].classList.remove('on');
+    els.driveBox.classList.remove('on');
+    els.crosshair.classList.toggle('on', G.mode === 'playing' && G.ammo > 0);
   }
-
-  // Interaction prompt.
-  if (player && G.mode === 'playing') {
-    const interact = player.getInteract();
-    if (interact) {
-      el['prompt-text'].textContent = interact.text;
-      el.prompt.classList.add('on');
-    } else {
-      el.prompt.classList.remove('on');
-    }
-  } else {
-    el.prompt.classList.remove('on');
-  }
-
-  // Controls hint fades away after the first seconds of play.
-  if (G.mode === 'playing') {
-    hintShown += dt;
-    el.hint.style.opacity = hintShown > 14 ? '0' : '1';
-  }
-
-  // Crosshair only on foot while playing.
-  el.crosshair.classList.toggle('on', G.mode === 'playing' && player && !player.inCar);
-
-  // Timers: toast, announce, damage flash.
-  if (toastTimer > 0) {
-    toastTimer -= dt;
-    if (toastTimer <= 0) el.toast.classList.remove('on');
-  }
-  if (announceTimer > 0) {
-    announceTimer -= dt;
-    if (announceTimer <= 0) {
-      el.announce.classList.remove('on');
-      el['announce-sub'].classList.remove('on');
-    }
-  }
-  if (flashTimer > 0) {
-    flashTimer -= dt;
-    el['damage-flash'].style.opacity = String(clamp(flashTimer / 0.35, 0, 1));
-    if (flashTimer <= 0) el['damage-flash'].style.opacity = '0';
-  }
-
-  updatePhone(dt);
-}
-
-export function resetHud() {
-  lastStars = -1;
-  lastCash = -1;
-  lastAmmo = -1;
-  lastObjective = '';
-  phoneQueue = [];
-  hintShown = 0;
-  if (el.phone) el.phone.innerHTML = '';
-  if (el.toast) el.toast.classList.remove('on');
-  if (el.announce) {
-    el.announce.classList.remove('on');
-    el['announce-sub'].classList.remove('on');
-  }
+  // HUD breathes: dim the top-left panel while cruising calmly.
+  const calm = G.wanted === 0 && G.missionTimer <= 0;
+  els.hud.style.setProperty('--hud-dim', calm ? '0.82' : '1');
 }

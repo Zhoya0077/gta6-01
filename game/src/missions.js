@@ -1,371 +1,340 @@
-// The story of Solmarina: five chained jobs from the fixer Dario Kessler,
-// told through phone messages, with objective markers, timers, rewards and
-// failure states. Completing all five pays off Mara's debt and opens free
-// roam. Missions are data plus a small stage machine; the beacon mesh and
-// the HUD objective always point at the current target.
+// Five chained story jobs for Mara Voss, from a first timed fare to the
+// Aurora S itself. Each mission is stages with a glowing beacon, phone
+// briefings from Dario, and a payout that chips at Mara's debt. Timers
+// forgive: running out restarts the job, it never ends the story.
 
 import * as THREE from 'three';
-import { G, emit, on } from './state.js';
-import { dist2 } from './util.js';
+import { G, emit } from './state.js';
 import { setWanted } from './police.js';
-import { spawnGuard } from './combat.js';
+import { phoneMessage, setObjective, announce, showToast } from './hud.js';
+import { makeFigure, makeContact } from './characters.js';
 
-const MISSIONS = [
+export const MISSIONS = [
   {
     name: 'First Fare',
-    reward: 150,
-    briefing: [
-      'Mara. You are back, and you still owe me. First job is easy: a package at the warehouse on the west side.',
-      'Pick it up, run it to the Marisol Hotel on the east side. My buyer does not wait. Do not be slow.',
+    brief: ["Mara. First job's simple.", 'Pick up my friend at 9th & Harbor. Then get them across town — fast, but in one piece.'],
+    stages: [
+      { label: 'Pick up the passenger', sub: 'Drive to the marker', pos: { x: -90, z: -30 } },
+      { label: 'Drop off the passenger', sub: 'You are on the clock', pos: { x: 90, z: 90 }, timer: 100, needCar: true },
     ],
-  },
-  {
-    name: 'Getaway',
     reward: 250,
-    briefing: [
-      'A Falcon GT is parked on 5th, red, unlocked. Take it. The owner will report it — that is the point.',
-      'Show me you can lose a tail. Three stars, Mara. Then go quiet until the heat dies.',
-    ],
   },
   {
-    name: 'The Drop',
-    reward: 300,
-    briefing: [
-      'Come to my garage first. I have a drop that needs to reach the end of the pier.',
-      'Patrols watch the pier at night. If they light you up, finish the run anyway. The boat leaves either way.',
+    name: 'Hot Wheels',
+    brief: ['A Falcon GT is sitting pretty uptown. No owner in sight.', 'Borrow it. Bring it to my garage on the west side. Cops will notice — of course they will.'],
+    stages: [
+      { label: 'Find the Falcon GT', sub: 'Uptown, near the towers', pos: { x: 155, z: -150 } },
+      { label: 'Steal the Falcon GT', sub: 'Press E beside the car', pos: { x: 155, z: -150 }, needStoryCar: 'falcon' },
+      { label: 'Deliver the Falcon to the garage', sub: 'Lose the heat if you can', pos: { x: -150, z: 150 }, needCar: true, needStoryCar: 'falcon' },
     ],
-  },
-  {
-    name: 'Shakedown',
     reward: 400,
-    briefing: [
-      'Three shops on my list stopped paying. Visit each one and collect. Politely. Mostly.',
-      'They keep guards. Guards keep opinions. Bring your fists and your pistol.',
-    ],
   },
   {
-    name: 'The Big Score',
-    reward: 800,
-    briefing: [
-      'Last job, Mara, and then we are square. The Aurora S — one of a kind — is sitting at the marina.',
-      'Take it, lose four stars of heat, and bring it to my garage in one piece. Do this and your debt is gone.',
+    name: 'Pier Drop',
+    brief: ['Pier 9. A friend in a yellow jacket is waiting.', 'Take the package. Bring it north. Do not open it, do not drop it, do not get chatty with uniforms.'],
+    stages: [
+      { label: 'Meet the contact on the pier', sub: 'East end, past the shack', pos: { x: 270, z: 30 } },
+      { label: 'Take the package', sub: 'Walk up to the contact', pos: { x: 270, z: 30 } },
+      { label: 'Deliver the package uptown', sub: 'Keep it quiet', pos: { x: -30, z: -210 } },
     ],
+    reward: 500,
+  },
+  {
+    name: 'Night Run',
+    brief: ['Tonight we run the whole city, end to end.', 'Three checkpoints, one clock. The streets are empty and the lamps are on. Show me what you can do.'],
+    stages: [
+      { label: 'Checkpoint 1 of 3', sub: 'Drive the route', pos: { x: 150, z: 150 }, timer: 130, needCar: true },
+      { label: 'Checkpoint 2 of 3', sub: 'Keep the pace', pos: { x: -150, z: -150 }, needCar: true },
+      { label: 'Checkpoint 3 of 3', sub: 'Almost there', pos: { x: 30, z: -210 }, needCar: true },
+      { label: 'Finish at the south lot', sub: 'Bring it home', pos: { x: 90, z: 210 }, needCar: true },
+    ],
+    reward: 650,
+  },
+  {
+    name: 'The Aurora S',
+    brief: ['Last job, Mara. The Aurora S. One of one.', 'It sits in a guarded lot in Harbor North. Guards, cameras, attitude. Take it, bring it to my garage, and your debt is gone.'],
+    stages: [
+      { label: 'Reach the guarded lot', sub: 'Harbor North — expect company', pos: { x: 210, z: -180 } },
+      { label: 'Steal the Aurora S', sub: 'Press E beside the car', pos: { x: 210, z: -180 }, needStoryCar: 'aurora' },
+      { label: 'Deliver the Aurora to the garage', sub: 'The whole city will hear this one', pos: { x: -150, z: 150 }, needCar: true, needStoryCar: 'aurora' },
+    ],
+    reward: 1200,
   },
 ];
 
-let beacon = null;
+let sceneRef = null;
+let beaconGroup = null;
 let beaconRing = null;
-let pierAlerted = false;
-let collectedShops = 0;
-let guardsSpawnedFor = -1;
+let passengerFig = null;
+let contactFig = null;
+let briefingSent = false;
+let stageTimerRunning = false;
 
-function makeBeacon(scene) {
-  const mat = new THREE.MeshBasicMaterial({
-    color: 0xffd54a, transparent: true, opacity: 0.28,
-    side: THREE.DoubleSide, depthWrite: false,
-  });
-  beacon = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.6, 26, 20, 1, true), mat);
-  beacon.position.y = 13;
-  beacon.visible = false;
-  const ringMat = new THREE.MeshBasicMaterial({ color: 0xffd54a, transparent: true, opacity: 0.85, side: THREE.DoubleSide });
-  beaconRing = new THREE.Mesh(new THREE.RingGeometry(2.2, 3.1, 28), ringMat);
-  beaconRing.rotation.x = -Math.PI / 2;
-  beaconRing.position.y = 0.15;
-  beaconRing.visible = false;
-  scene.add(beacon, beaconRing);
+function findStoryCar(key) {
+  return G.cars.find((c) => c.storyCar === key) || null;
 }
 
-function setObjective(name, text, sub, pos) {
-  G.objective = { name, text, sub: sub || '', pos: pos || null };
-  G.objectivePos = pos || null;
-  if (pos) {
-    beacon.position.x = pos.x;
-    beacon.position.z = pos.z;
-    beaconRing.position.x = pos.x;
-    beaconRing.position.z = pos.z;
-    beacon.visible = true;
-    beaconRing.visible = true;
-  } else {
-    beacon.visible = false;
-    beaconRing.visible = false;
-  }
-}
-
-function phone(text, delay) {
-  emit('phone', { from: 'DARIO', text, delay: delay || 0 });
+function buildBeacon(scene) {
+  beaconGroup = new THREE.Group();
+  const pillar = new THREE.Mesh(
+    new THREE.CylinderGeometry(1.6, 2.2, 26, 14, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0xffd54a, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false }),
+  );
+  pillar.position.y = 13;
+  beaconGroup.add(pillar);
+  beaconRing = new THREE.Mesh(
+    new THREE.TorusGeometry(3.4, 0.28, 8, 28),
+    new THREE.MeshBasicMaterial({ color: 0xffd54a, transparent: true, opacity: 0.9 }),
+  );
+  beaconRing.rotation.x = Math.PI / 2;
+  beaconRing.position.y = 0.3;
+  beaconGroup.add(beaconRing);
+  const disc = new THREE.Mesh(
+    new THREE.CircleGeometry(3.2, 24),
+    new THREE.MeshBasicMaterial({ color: 0xffd54a, transparent: true, opacity: 0.16, blending: THREE.AdditiveBlending, depthWrite: false }),
+  );
+  disc.rotation.x = -Math.PI / 2;
+  disc.position.y = 0.08;
+  beaconGroup.add(disc);
+  beaconGroup.visible = false;
+  scene.add(beaconGroup);
+  G.beacon = beaconGroup;
 }
 
 export function initMissions(scene) {
-  makeBeacon(scene);
-  G.objective = { name: '', text: '', sub: '', pos: null };
-  on('enteredCar', (data) => {
-    // Stealing a story car advances its mission the moment Mara is inside.
-    if (G.missionIndex === 1 && G.missionStage === 0 && data.car.storyCar === 'falcon') {
-      setWanted(3);
-      phone('That is the one. Now lose them — go quiet, break line of sight, and wait the heat out.', 0.5);
-      G.missionStage = 1;
-      setObjective('Getaway', 'Lose the cops', 'Stay out of sight until the wanted level clears', null);
+  sceneRef = scene;
+  buildBeacon(scene);
+  passengerFig = makeFigure({ shirt: 0x7d4fc9, pants: 0x2b3440 });
+  passengerFig.group.position.set(-90, 0, -30);
+  passengerFig.group.visible = false;
+  scene.add(passengerFig.group);
+  contactFig = makeContact();
+  contactFig.group.position.set(272, 0, 30);
+  contactFig.group.visible = false;
+  contactFig.group.rotation.y = -Math.PI / 2;
+  scene.add(contactFig.group);
+}
+
+function currentStage() {
+  if (G.missionIndex >= MISSIONS.length) return null;
+  const m = MISSIONS[G.missionIndex];
+  return m.stages[G.missionStage] || null;
+}
+
+function placeBeacon() {
+  const stage = currentStage();
+  if (!stage) {
+    beaconGroup.visible = false;
+    G.objectivePos = null;
+    G.objectiveLabel = '';
+    return;
+  }
+  const pos = stage.pos;
+  // Story-car stages track the car itself once it moves.
+  if (stage.needStoryCar) {
+    const car = findStoryCar(stage.needStoryCar);
+    if (car && G.missionStage > 0 && stage.needCar) {
+      // Delivery: beacon stays on the destination.
+    } else if (car && !stage.needCar) {
+      beaconGroup.position.set(car.mesh.position.x, 0, car.mesh.position.z);
+      G.objectivePos = { x: car.mesh.position.x, z: car.mesh.position.z };
+      G.objectiveLabel = stage.label;
+      beaconGroup.visible = true;
+      return;
     }
-    if (G.missionIndex === 4 && G.missionStage === 0 && data.car.storyCar === 'aurora') {
-      setWanted(4);
-      phone('FOUR stars, Mara. The whole city is coming. Lose them, then bring my car home.', 0.5);
-      G.missionStage = 1;
-      setObjective('The Big Score', 'Lose the cops', 'Break away and stay hidden until the heat dies', null);
-    }
-  });
+  }
+  beaconGroup.position.set(pos.x, 0, pos.z);
+  G.objectivePos = { ...pos };
+  G.objectiveLabel = stage.label;
+  beaconGroup.visible = true;
+}
+
+function refreshObjective() {
+  const stage = currentStage();
+  if (!stage || G.missionIndex >= MISSIONS.length) {
+    setObjective('Free Roam', 'Solmarina is yours — drive, earn, stay ahead.', '');
+    return;
+  }
+  const m = MISSIONS[G.missionIndex];
+  setObjective(m.name, stage.label, stage.sub || '');
 }
 
 export function startMission(index) {
-  const mission = MISSIONS[index];
-  if (!mission) {
-    // Story finished: free roam.
-    G.storyDone = true;
-    G.missionIndex = 5;
-    setObjective('Free Roam', 'Solmarina is yours', 'Steal cars, find pickups, stay ahead of the sirens', null);
-    return;
-  }
   G.missionIndex = index;
   G.missionStage = 0;
   G.missionTimer = -1;
-  G.missionInteract = null;
-  pierAlerted = false;
-  collectedShops = 0;
-  guardsSpawnedFor = -1;
-  mission.briefing.forEach((text, i) => phone(text, 0.4 + i * 3.2));
-  applyStage();
+  stageTimerRunning = false;
+  briefingSent = true;
+  const m = MISSIONS[index];
+  if (G.audio) G.audio.phone();
+  m.brief.forEach((line, i) => {
+    setTimeout(() => phoneMessage('DARIO', line), 400 + i * 1400);
+  });
+  if (index === 3 && G.city) G.city.setTimeOfDay('night');
+  if (index === 0) passengerFig.group.visible = true;
+  if (index === 2) contactFig.group.visible = true;
+  placeBeacon();
+  refreshObjective();
+  G.missionCooldown = 0;
 }
 
-function applyStage() {
-  const loc = G.city.locations;
-  const i = G.missionIndex;
-  const s = G.missionStage;
-  G.missionInteract = null;
-  if (i === 0 && s === 0) {
-    setObjective('First Fare', 'Pick up the package at the warehouse', 'West side, by the crates', loc.warehouse);
-  } else if (i === 0 && s === 1) {
-    G.missionTimer = 100;
-    setObjective('First Fare', 'Deliver the package to the Marisol Hotel', 'East side — beat the clock', loc.hotel);
-  } else if (i === 1 && s === 0) {
-    setObjective('Getaway', 'Steal the red Falcon GT', 'Parked on the east road — take it', liveCarPos('falcon'));
-  } else if (i === 1 && s === 1) {
-    setObjective('Getaway', 'Lose the cops', 'Stay out of sight until the wanted level clears', null);
-  } else if (i === 2 && s === 0) {
-    setObjective('The Drop', 'Collect the drop from Dario\'s garage', 'North-west corner of the city', loc.garage);
-  } else if (i === 2 && s === 1) {
-    setObjective('The Drop', 'Take the drop to the end of the pier', 'Watch for patrols near the water', loc.pierEnd);
-  } else if (i === 3) {
-    const shop = loc.shops[s];
-    if (shop) {
-      setObjective('Shakedown', 'Collect from ' + shop.name, 'Shop ' + (s + 1) + ' of 3 — press E at the door', shop);
-      G.missionInteract = {
-        x: shop.x, z: shop.z, radius: 5, text: 'Collect from ' + shop.name,
-        run: () => collectShop(s),
-      };
-    }
-  } else if (i === 4 && s === 0) {
-    setObjective('The Big Score', 'Steal the Aurora S from the marina', 'Teal supercar on the marina lot', liveCarPos('aurora'));
-  } else if (i === 4 && s === 1) {
-    setObjective('The Big Score', 'Lose the cops', 'Four stars — break away and stay hidden', null);
-  } else if (i === 4 && s === 2) {
-    setObjective('The Big Score', 'Deliver the Aurora to Dario\'s garage', 'Bring it home in one piece', loc.garage);
-  }
-}
-
-function liveCarPos(storyKey) {
-  for (const car of G.cars) {
-    if (car.storyCar === storyKey) return { x: car.mesh.position.x, z: car.mesh.position.z };
-  }
-  return G.city.locations.falconSpot;
-}
-
-function collectShop(stage) {
-  const shop = G.city.locations.shops[stage];
-  collectedShops++;
-  G.cash += 60;
-  emit('toast', { text: '+$60 collected from ' + shop.name });
-  if (G.audio) G.audio.buyBlip();
-  // The shop's guards object — two per shop, once each.
-  if (guardsSpawnedFor !== stage) {
-    guardsSpawnedFor = stage;
-    spawnGuard(G.scene, shop.x + 4, shop.z + 3, {});
-    spawnGuard(G.scene, shop.x - 4, shop.z - 3, {});
-    phone('They sent guards? Handle it, Mara. Then the next shop.', 0.5);
-  }
-  if (collectedShops >= 3) {
-    completeMission();
-  } else {
-    G.missionStage = stage + 1;
-    applyStage();
-  }
-}
-
-function completeMission() {
-  const mission = MISSIONS[G.missionIndex];
-  G.cash += mission.reward;
-  G.missionsDone++;
-  G.stats.missionsDone++;
-  emit('announce', { text: 'MISSION COMPLETE', sub: mission.name + '  ·  +$' + mission.reward });
-  if (G.audio) G.audio.missionJingle();
-  emit('saveGame', {});
-  const next = G.missionIndex + 1;
-  if (next >= MISSIONS.length) {
-    G.storyDone = true;
-    G.missionIndex = 5;
-    G.missionCooldown = 2.5;
-    setObjective('Free Roam', 'Solmarina is yours', 'Keep driving — the city never sleeps', null);
-    emit('storyComplete', {});
-  } else {
-    G.missionIndex = next;
-    G.missionCooldown = 4;
-    setObjective(mission.name, 'Job done — awaiting Dario\'s next call…', '', null);
-  }
-}
-
-function failMission(reason) {
-  emit('announce', { text: 'JOB FAILED', sub: reason });
-  if (G.audio) G.audio.failSting();
-  phone('That was sloppy, Mara. Do it again — and do it right this time.', 1);
-  G.missionStage = 0;
-  G.missionTimer = -1;
-  applyStage();
-}
-
-// Jump straight to a mission stage without briefings. Used by the
-// screenshot presets to stage a mid-story moment through the real systems.
 export function debugSetMission(index, stage) {
   G.missionIndex = index;
   G.missionStage = stage;
   G.missionTimer = -1;
-  G.missionCooldown = 0;
-  G.missionInteract = null;
-  pierAlerted = index === 2 && stage === 1;
-  collectedShops = index === 3 ? stage : 0;
-  guardsSpawnedFor = -1;
-  applyStage();
+  briefingSent = true;
+  if (index === 0) passengerFig.group.visible = true;
+  if (index === 2) contactFig.group.visible = true;
+  placeBeacon();
+  refreshObjective();
 }
 
-export function restartCurrentMission() {  // After a bust: the current job resets to its first stage, guards gone.
-  for (const guard of [...G.guards]) {
-    G.scene.remove(guard.fig.group);
+function advanceStage() {
+  const m = MISSIONS[G.missionIndex];
+  // Stage side effects.
+  if (G.missionIndex === 0 && G.missionStage === 0) {
+    passengerFig.group.visible = false;
+    G.passenger = true;
   }
-  G.guards.length = 0;
-  if (G.missionIndex < MISSIONS.length) {
-    G.missionStage = 0;
-    G.missionTimer = -1;
-    applyStage();
+  if (G.missionIndex === 1 && G.missionStage === 1) {
+    setWanted(Math.max(G.wanted, 2));
   }
+  if (G.missionIndex === 2 && G.missionStage === 1) {
+    G.packageCarried = true;
+    contactFig.group.visible = false;
+    setWanted(Math.max(G.wanted, 1));
+    showToast('Package secured. Do not get stopped.');
+  }
+  if (G.missionIndex === 4 && G.missionStage === 1) {
+    setWanted(Math.max(G.wanted, 3));
+  }
+  G.missionStage++;
+  G.missionTimer = -1;
+  stageTimerRunning = false;
+  if (G.audio) G.audio.checkpoint();
+  if (G.missionStage >= m.stages.length) {
+    completeMission();
+    return;
+  }
+  placeBeacon();
+  refreshObjective();
+}
+
+function completeMission() {
+  const m = MISSIONS[G.missionIndex];
+  G.cash += m.reward;
+  G.missionsDone++;
+  G.stats.missionsDone++;
+  G.passenger = null;
+  G.packageCarried = false;
+  if (G.audio) {
+    G.audio.missionDone();
+    G.audio.cash();
+  }
+  announce('JOB DONE', m.name + '  •  +$' + m.reward);
+  showToast('Dario paid $' + m.reward + '. Debt shrinking.');
+  emit('missionComplete', { index: G.missionIndex, reward: m.reward });
+  if (G.missionIndex === 3 && G.city) G.city.setTimeOfDay('dusk');
+  G.missionIndex++;
+  G.missionStage = 0;
+  G.missionTimer = -1;
+  briefingSent = false;
+  if (G.missionIndex >= MISSIONS.length) {
+    G.storyDone = true;
+    beaconGroup.visible = false;
+    G.objectivePos = null;
+    refreshObjective();
+    emit('storyComplete', {});
+    return;
+  }
+  G.missionCooldown = 5;
+  beaconGroup.visible = false;
+  G.objectivePos = null;
+  setObjective('Between Jobs', 'Dario is lining up the next job…', '');
+}
+
+function failTimer() {
+  showToast('Too slow — Dario gives you another shot.');
+  G.missionStage = 0;
+  G.missionTimer = -1;
+  stageTimerRunning = false;
+  if (G.missionIndex === 0) {
+    passengerFig.group.visible = true;
+    G.passenger = null;
+  }
+  placeBeacon();
+  refreshObjective();
 }
 
 export function updateMissions(dt) {
   // Beacon pulse.
-  if (beacon && beacon.visible) {
-    const pulse = 1 + Math.sin(G.time * 3) * 0.08;
-    beacon.scale.set(pulse, 1, pulse);
-    beaconRing.scale.setScalar(pulse);
-    beacon.material.opacity = 0.24 + Math.sin(G.time * 3) * 0.06;
+  if (beaconGroup && beaconGroup.visible) {
+    const s = 1 + Math.sin(G.time * 3.2) * 0.12;
+    beaconRing.scale.set(s, s, s);
+    beaconGroup.rotation.y += dt * 0.6;
   }
-
-  if (G.mode !== 'playing') return;
-
-  // Delayed briefing for the next mission.
-  if (G.missionCooldown > 0) {
+  if (G.missionIndex >= MISSIONS.length) return;
+  // Next briefing after a short breather between jobs.
+  if (!briefingSent) {
     G.missionCooldown -= dt;
-    if (G.missionCooldown <= 0 && G.missionIndex < MISSIONS.length) {
-      startMission(G.missionIndex);
-    }
+    if (G.missionCooldown <= 0) startMission(G.missionIndex);
     return;
   }
-  if (G.storyDone || G.missionIndex >= MISSIONS.length) return;
-
-  const player = G.player;
-  if (!player) return;
-  const pos = player.position();
-  const loc = G.city.locations;
-  const i = G.missionIndex;
-  const s = G.missionStage;
-
-  // Mission timer (First Fare delivery leg).
+  const stage = currentStage();
+  if (!stage) return;
+  // Start the stage timer once, on entry.
+  if (stage.timer && !stageTimerRunning && G.missionTimer < 0) {
+    G.missionTimer = stage.timer;
+    stageTimerRunning = true;
+  }
   if (G.missionTimer > 0) {
     G.missionTimer -= dt;
     if (G.missionTimer <= 0) {
       G.missionTimer = -1;
-      failMission('Too slow — the buyer walked away.');
+      failTimer();
       return;
     }
   }
-
-  // Story-car markers follow the car.
-  if ((i === 1 && s === 0) || (i === 4 && s === 0)) {
-    const target = liveCarPos(i === 1 ? 'falcon' : 'aurora');
-    if (G.objectivePos) {
-      G.objectivePos.x = target.x;
-      G.objectivePos.z = target.z;
-      beacon.position.x = target.x;
-      beacon.position.z = target.z;
-      beaconRing.position.x = target.x;
-      beaconRing.position.z = target.z;
+  const p = G.player.pos();
+  const target = stage.needStoryCar && !stage.needCar ? findStoryCar(stage.needStoryCar) : null;
+  const tx = target ? target.mesh.position.x : stage.pos.x;
+  const tz = target ? target.mesh.position.z : stage.pos.z;
+  const d = Math.hypot(p.x - tx, p.z - tz);
+  // Story-car steal stages complete on entering the car.
+  if (stage.needStoryCar && !stage.needCar) {
+    const car = findStoryCar(stage.needStoryCar);
+    if (car && G.player.inCar === car) {
+      advanceStage();
+      return;
     }
-    // Already driving the target car when the mission starts: advance.
-    if (player.inCar && player.car && player.car.storyCar === (i === 1 ? 'falcon' : 'aurora')) {
-      if (i === 1) {
-        setWanted(3);
-        G.missionStage = 1;
-        setObjective('Getaway', 'Lose the cops', 'Stay out of sight until the wanted level clears', null);
-      } else {
-        setWanted(4);
-        G.missionStage = 1;
-        setObjective('The Big Score', 'Lose the cops', 'Break away and stay hidden until the heat dies', null);
-      }
+    if (d < 7 && car) placeBeacon();
+    return;
+  }
+  // Delivery stages need the right car at the marker.
+  if (stage.needStoryCar && stage.needCar) {
+    const car = findStoryCar(stage.needStoryCar);
+    if (d < 9 && G.player.inCar === car) {
+      advanceStage();
+      return;
     }
     return;
   }
-
-  // Lose-the-cops stages complete when the heat hits zero.
-  if ((i === 1 && s === 1) || (i === 4 && s === 1)) {
-    if (G.wanted === 0) {
-      if (i === 1) {
-        completeMission();
-      } else {
-        G.missionStage = 2;
-        phone('Clean. Now bring the Aurora to my garage — and try not to scratch it.', 0.5);
-        applyStage();
-      }
-    }
+  // Driving stages need any car; walking stages need feet (or wheels).
+  if (stage.needCar) {
+    if (d < 9 && G.player.inCar) advanceStage();
     return;
   }
+  if (d < 6) advanceStage();
+}
 
-  // Arrival stages.
-  function arrived(target, radius) {
-    return dist2(pos.x, pos.z, target.x, target.z) < radius;
-  }
-  if (i === 0 && s === 0 && arrived(loc.warehouse, 7)) {
-    emit('toast', { text: 'PACKAGE COLLECTED' });
-    if (G.audio) G.audio.pickup();
-    G.missionStage = 1;
-    applyStage();
-  } else if (i === 0 && s === 1 && arrived(loc.hotel, 8)) {
-    completeMission();
-  } else if (i === 2 && s === 0 && arrived(loc.garage, 7)) {
-    emit('toast', { text: 'DROP COLLECTED' });
-    if (G.audio) G.audio.pickup();
-    G.missionStage = 1;
-    applyStage();
-  } else if (i === 2 && s === 1) {
-    if (!pierAlerted && dist2(pos.x, pos.z, loc.pierEnd.x, loc.pierEnd.z) < 70) {
-      pierAlerted = true;
-      setWanted(Math.max(G.wanted, 2));
-      phone('Patrols on the pier road — they made you. Finish the run anyway.', 0.3);
-    }
-    if (arrived(loc.pierEnd, 7)) completeMission();
-  } else if (i === 4 && s === 2) {
-    if (player.inCar && player.car && player.car.storyCar === 'aurora' && arrived(loc.garage, 9)) {
-      completeMission();
-    } else if (arrived(loc.garage, 9) && !(player.inCar && player.car && player.car.storyCar === 'aurora')) {
-      // At the garage without the car: remind, don't complete.
-      if (!updateMissions.reminded || G.time - updateMissions.reminded > 8) {
-        updateMissions.reminded = G.time;
-        phone('Where is the car, Mara? Bring the Aurora itself to my garage.', 0.2);
-      }
-    }
-  }
+export function missionProgressText() {
+  if (G.storyDone) return 'Story complete';
+  return 'Job ' + (G.missionIndex + 1) + ' of ' + MISSIONS.length;
+}
+
+// Distance to the live objective, for the HUD's range readout.
+export function objectiveDistance() {
+  if (!G.objectivePos || !G.player) return null;
+  const p = G.player.pos();
+  return Math.round(Math.hypot(p.x - G.objectivePos.x, p.z - G.objectivePos.z));
 }

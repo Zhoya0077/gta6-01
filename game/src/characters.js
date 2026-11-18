@@ -1,114 +1,138 @@
-// Low-poly humanoid figures for Solmarina: the player, pedestrians,
-// police officers and guards are all built from the same box-based body
-// with swinging limbs, so the whole crowd shares one cheap animation rig.
+// Procedural people: every figure is boxes and spheres built in code, with
+// swinging limbs for the walk cycle and a punch pose for combat. Mara,
+// officers, guards and pedestrians share one rig with different palettes.
 
 import * as THREE from 'three';
 
-const SKIN_TONES = [0xf2c89b, 0xe0ac69, 0xc68642, 0x8d5524, 0xffdbac];
-const HAIR_COLORS = [0x2b1d16, 0x4a2f1d, 0x111111, 0x6b4a2a, 0xb0b0b0, 0x8a5a2b];
-const SHIRT_COLORS = [0xd94f4f, 0x4f7ed9, 0x4fd97a, 0xe0d24f, 0x9b4fd9, 0x4fd9d2, 0xe88a4f, 0xf2f2f2];
-const PANTS_COLORS = [0x2e4057, 0x3b3b3b, 0x5a4a3b, 0x274156, 0x4a4a55];
+const SKINS = [0xf2c89b, 0xe0ac69, 0xc68642, 0x8d5524, 0xffdbac];
+const SHIRTS = [0x2e6fdb, 0xd64545, 0x3aa655, 0xe0a526, 0x7d4fc9, 0xdddddd, 0x222831, 0x2ee6c8];
+const PANTS = [0x2b3440, 0x4a3b2a, 0x334155, 0x1f2937, 0x5b4a68];
+const HAIRS = [0x1c1c1c, 0x4a2f1a, 0x8a6b3a, 0xb9b9b9, 0x703d1e];
 
 function box(w, h, d, color, x, y, z) {
   const mesh = new THREE.Mesh(
     new THREE.BoxGeometry(w, h, d),
-    new THREE.MeshLambertMaterial({ color }),
+    new THREE.MeshStandardMaterial({ color, roughness: 0.85, metalness: 0.05 }),
   );
   mesh.position.set(x, y, z);
+  mesh.castShadow = true;
   return mesh;
 }
 
-// Build a humanoid ~1.8 units tall, facing +Z. Returns the group plus
-// references to the parts the walk animation swings.
-export function makeHumanoid(options) {
-  const opts = options || {};
+export function makeFigure(opts = {}) {
   const rng = opts.rng || Math.random;
-  const skin = opts.skin ?? SKIN_TONES[Math.floor(rng() * SKIN_TONES.length)];
-  const shirt = opts.shirt ?? SHIRT_COLORS[Math.floor(rng() * SHIRT_COLORS.length)];
-  const pants = opts.pants ?? PANTS_COLORS[Math.floor(rng() * PANTS_COLORS.length)];
-  const hair = opts.hair ?? HAIR_COLORS[Math.floor(rng() * HAIR_COLORS.length)];
+  const pick = (arr) => arr[Math.floor(rng() * arr.length)];
+  const skin = opts.skin ?? pick(SKINS);
+  const shirt = opts.shirt ?? pick(SHIRTS);
+  const pants = opts.pants ?? pick(PANTS);
+  const hair = opts.hair ?? pick(HAIRS);
 
   const group = new THREE.Group();
+  // Legs pivot at the hip so the walk swing looks right.
+  const legL = new THREE.Group();
+  const legR = new THREE.Group();
+  legL.position.set(-0.14, 0.82, 0);
+  legR.position.set(0.14, 0.82, 0);
+  legL.add(box(0.2, 0.82, 0.24, pants, 0, -0.41, 0));
+  legR.add(box(0.2, 0.82, 0.24, pants, 0, -0.41, 0));
+  const armL = new THREE.Group();
+  const armR = new THREE.Group();
+  armL.position.set(-0.36, 1.42, 0);
+  armR.position.set(0.36, 1.42, 0);
+  armL.add(box(0.16, 0.62, 0.2, shirt, 0, -0.28, 0));
+  armR.add(box(0.16, 0.62, 0.2, shirt, 0, -0.28, 0));
+  // Skin hands at the end of each arm.
+  armL.add(box(0.15, 0.14, 0.17, skin, 0, -0.62, 0));
+  armR.add(box(0.15, 0.14, 0.17, skin, 0, -0.62, 0));
+  const torso = box(0.56, 0.66, 0.32, shirt, 0, 1.15, 0);
+  const head = new THREE.Group();
+  head.position.set(0, 1.68, 0);
+  const skull = new THREE.Mesh(
+    new THREE.SphereGeometry(0.21, 14, 12),
+    new THREE.MeshStandardMaterial({ color: skin, roughness: 0.7 }),
+  );
+  skull.castShadow = true;
+  head.add(skull);
+  const hairMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.215, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.55),
+    new THREE.MeshStandardMaterial({ color: hair, roughness: 0.95 }),
+  );
+  hairMesh.position.y = 0.02;
+  head.add(hairMesh);
+  group.add(legL, legR, armL, armR, torso, head);
 
-  // Legs pivot at the hip (y = 0.85) so the walk swing looks right.
-  const legGeo = new THREE.BoxGeometry(0.22, 0.85, 0.24);
-  const legMat = new THREE.MeshLambertMaterial({ color: pants });
-  const leftLeg = new THREE.Mesh(legGeo, legMat);
-  leftLeg.geometry = legGeo.clone();
-  leftLeg.geometry.translate(0, -0.425, 0);
-  leftLeg.position.set(-0.14, 0.85, 0);
-  const rightLeg = new THREE.Mesh(legGeo, legMat);
-  rightLeg.geometry = legGeo.clone();
-  rightLeg.geometry.translate(0, -0.425, 0);
-  rightLeg.position.set(0.14, 0.85, 0);
-
-  // Arms pivot at the shoulder (y = 1.42).
-  const armGeo = new THREE.BoxGeometry(0.16, 0.72, 0.18);
-  const armMat = new THREE.MeshLambertMaterial({ color: shirt });
-  const leftArm = new THREE.Mesh(armGeo, armMat);
-  leftArm.geometry = armGeo.clone();
-  leftArm.geometry.translate(0, -0.36, 0);
-  leftArm.position.set(-0.36, 1.42, 0);
-  const rightArm = new THREE.Mesh(armGeo, armMat);
-  rightArm.geometry = armGeo.clone();
-  rightArm.geometry.translate(0, -0.36, 0);
-  rightArm.position.set(0.36, 1.42, 0);
-
-  const body = box(0.56, 0.62, 0.3, shirt, 0, 1.16, 0);
-  const head = box(0.34, 0.36, 0.34, skin, 0, 1.66, 0);
-  const hairMesh = box(0.36, 0.14, 0.36, hair, 0, 1.86, 0);
-  // Simple face: two dark eyes on the front of the head.
-  const eyeMat = new THREE.MeshBasicMaterial({ color: 0x1a1a1a });
-  const eyeGeo = new THREE.BoxGeometry(0.05, 0.06, 0.02);
-  const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
-  eyeL.position.set(-0.08, 1.68, 0.18);
-  const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
-  eyeR.position.set(0.08, 1.68, 0.18);
-
-  group.add(leftLeg, rightLeg, leftArm, rightArm, body, head, hairMesh, eyeL, eyeR);
-
-  // Optional extras: a cap, a police hat, or a held pistol.
-  let hat = null;
-  if (opts.hat === 'police') {
-    hat = box(0.4, 0.1, 0.4, 0x1d3557, 0, 1.92, 0);
-    const brim = box(0.44, 0.03, 0.44, 0x101820, 0, 1.87, 0);
-    group.add(hat, brim);
-  } else if (opts.hat === 'cap') {
-    hat = box(0.38, 0.1, 0.38, opts.hatColor || 0xcc3333, 0, 1.9, 0);
-    const peak = box(0.38, 0.03, 0.2, opts.hatColor || 0xcc3333, 0, 1.86, 0.26);
-    group.add(hat, peak);
+  if (opts.hat === 'cap') {
+    const cap = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.23, 0.23, 0.09, 14),
+      new THREE.MeshStandardMaterial({ color: opts.hatColor || 0xd64545, roughness: 0.8 }),
+    );
+    cap.position.y = 0.17;
+    head.add(cap);
+    head.add(box(0.3, 0.03, 0.22, opts.hatColor || 0xd64545, 0, 0.13, 0.26));
+  } else if (opts.hat === 'officer') {
+    const cap = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.24, 0.25, 0.1, 14),
+      new THREE.MeshStandardMaterial({ color: 0x16233d, roughness: 0.6 }),
+    );
+    cap.position.y = 0.18;
+    head.add(cap);
+    const badge = box(0.08, 0.08, 0.02, 0xffd54a, 0.14, 1.28, 0.17);
+    group.add(badge);
   }
 
-  let pistol = null;
-  if (opts.pistol) {
-    pistol = box(0.07, 0.1, 0.3, 0x222222, 0, -0.72, 0.1);
-    rightArm.add(pistol);
-  }
+  // Optional pistol in the right hand, hidden until combat needs it.
+  const gun = new THREE.Group();
+  const gunBody = box(0.07, 0.09, 0.3, 0x1a1a1a, 0, 0, 0.1);
+  gun.add(gunBody);
+  gun.position.set(0, -0.68, 0.05);
+  gun.visible = false;
+  armR.add(gun);
 
-  return {
-    group,
-    parts: { leftLeg, rightLeg, leftArm, rightArm, body, head },
-    pistol,
-  };
+  return { group, head, torso, armL, armR, legL, legR, gun, phase: Math.random() * 6.28, punch: 0 };
 }
 
-// Swing the limbs for a walk/run cycle. walkPhase advances with distance
-// travelled; speedNorm 0..1 blends the swing from idle to full stride.
-// punchT 0..1 overrides the right arm with a punch jab.
-export function animateHumanoid(fig, walkPhase, speedNorm, punchT) {
-  const swing = Math.sin(walkPhase) * 0.62 * speedNorm;
-  fig.parts.leftLeg.rotation.x = swing;
-  fig.parts.rightLeg.rotation.x = -swing;
-  fig.parts.leftArm.rotation.x = -swing * 0.8;
-  if (punchT > 0) {
-    // Jab: right arm snaps forward, then relaxes back.
-    const jab = Math.sin(Math.min(1, punchT) * Math.PI);
-    fig.parts.rightArm.rotation.x = -1.5 * jab;
+export function animateFigure(fig, speed, dt, opts = {}) {
+  fig.phase += dt * (2 + speed * 1.35);
+  const swing = Math.min(0.7, speed * 0.09) * Math.sin(fig.phase);
+  if (opts.punch > 0) {
+    fig.punch = opts.punch;
+    fig.armR.rotation.x = -1.7 + Math.sin(fig.punch * 18) * 0.2;
+    fig.armL.rotation.x = -0.4;
+  } else if (opts.aim) {
+    fig.armR.rotation.x = -1.5;
+    fig.armL.rotation.x = -0.3;
+    fig.armR.rotation.z = -0.15;
   } else {
-    fig.parts.rightArm.rotation.x = swing * 0.8;
+    fig.armL.rotation.x = swing;
+    fig.armR.rotation.x = -swing;
+    fig.armL.rotation.z = 0.06;
+    fig.armR.rotation.z = -0.06;
   }
-  // Subtle idle breathing when standing still.
-  if (speedNorm < 0.05 && punchT <= 0) {
-    fig.parts.body.position.y = 1.16 + Math.sin(walkPhase * 0.4) * 0.008;
+  fig.legL.rotation.x = -swing * 1.15;
+  fig.legR.rotation.x = swing * 1.15;
+  fig.group.position.y = Math.abs(Math.sin(fig.phase)) * Math.min(0.05, speed * 0.006);
+  if (opts.cower) {
+    fig.head.rotation.x = 0.5;
+    fig.armL.rotation.x = -2.4;
+    fig.armR.rotation.x = -2.4;
+  } else {
+    fig.head.rotation.x = 0;
   }
+}
+
+export function makeMara() {
+  return makeFigure({ skin: 0xe0ac69, shirt: 0xb03a4e, pants: 0x2b3440, hair: 0x1c1c1c, hat: null });
+}
+
+export function makeOfficer() {
+  return makeFigure({ shirt: 0x24365e, pants: 0x16233d, hat: 'officer' });
+}
+
+export function makeGuard() {
+  return makeFigure({ shirt: 0x222831, pants: 0x111111, skin: 0xc68642 });
+}
+
+// Dario's driver contact waiting at the pier: bright jacket, easy to spot.
+export function makeContact() {
+  return makeFigure({ skin: 0x8d5524, shirt: 0xe0a526, pants: 0x334155, hair: 0xb9b9b9, hat: 'cap', hatColor: 0xe0a526 });
 }

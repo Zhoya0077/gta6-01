@@ -1,132 +1,95 @@
-// Keyboard + mouse input for Solmarina. Tracks held keys, edge-triggered
-// presses (consumed once per frame), mouse drag deltas for the orbit
-// camera, and pointer lock when the player clicks into the game.
+// Keyboard + mouse input with edge detection. The game polls held keys
+// every frame and consumes one-shot presses, so a tap never fires twice
+// and a held key never re-triggers an interaction.
 
-export function createInput(canvas) {
-  const input = {
-    keys: new Set(),
-    pressed: new Set(),
-    mouseDX: 0,
-    mouseDY: 0,
-    mouseDown: false,
-    dragging: false,
-    locked: false,
-    wheel: 0,
-    clicked: false, // left mouse button pressed this frame (for shooting)
-  };
-
-  const KEYMAP = {
-    KeyW: 'up', ArrowUp: 'up',
-    KeyS: 'down', ArrowDown: 'down',
-    KeyA: 'left', ArrowLeft: 'turnLeft',
-    KeyD: 'right', ArrowRight: 'turnRight',
-    ShiftLeft: 'run', ShiftRight: 'run',
-    Space: 'jump',
-    KeyE: 'interact',
-    KeyF: 'punch',
-    KeyP: 'pause',
-    Escape: 'escape',
-    KeyM: 'mute',
-  };
-
-  function onKeyDown(e) {
-    const action = KEYMAP[e.code];
-    if (action) {
-      if (!input.keys.has(action)) input.pressed.add(action);
-      input.keys.add(action);
-      if (e.code === 'Space') e.preventDefault();
-    }
-    // Block browser shortcuts that would steal the game.
-    if (e.code === 'Tab') e.preventDefault();
+export class Input {
+  constructor() {
+    this.keys = new Set();
+    this.pressed = new Set();
+    this.dragging = false;
+    this.lastX = 0;
+    this.lastY = 0;
+    this.yawDelta = 0;
+    this.pitchDelta = 0;
+    this.clicked = false;
+    this.clickX = 0;
+    this.clickY = 0;
+    this.enabled = true;
+    this._onKeyDown = (e) => {
+      if (e.repeat) return;
+      this.keys.add(e.code);
+      this.pressed.add(e.code);
+      if (['Space', 'ArrowUp', 'ArrowDown'].includes(e.code)) e.preventDefault();
+    };
+    this._onKeyUp = (e) => this.keys.delete(e.code);
+    this._onBlur = () => { this.keys.clear(); this.dragging = false; };
   }
 
-  function onKeyUp(e) {
-    const action = KEYMAP[e.code];
-    if (action) input.keys.delete(action);
+  attach(canvas) {
+    window.addEventListener('keydown', this._onKeyDown);
+    window.addEventListener('keyup', this._onKeyUp);
+    window.addEventListener('blur', this._onBlur);
+    canvas.addEventListener('mousedown', (e) => {
+      if (!this.enabled) return;
+      this.dragging = true;
+      this.lastX = e.clientX;
+      this.lastY = e.clientY;
+      this.clicked = true;
+      this.clickX = e.clientX;
+      this.clickY = e.clientY;
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (!this.dragging || !this.enabled) return;
+      this.yawDelta += e.clientX - this.lastX;
+      this.pitchDelta += e.clientY - this.lastY;
+      this.lastX = e.clientX;
+      this.lastY = e.clientY;
+    });
+    window.addEventListener('mouseup', () => { this.dragging = false; });
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 
-  function onMouseDown(e) {
-    if (e.button !== 0) return;
-    input.mouseDown = true;
-    input.dragging = true;
-    input.clicked = true;
-    input.lastX = e.clientX;
-    input.lastY = e.clientY;
+  held(code) { return this.keys.has(code); }
+
+  consume(code) {
+    if (this.pressed.has(code)) { this.pressed.delete(code); return true; }
+    return false;
   }
 
-  function onMouseUp(e) {
-    if (e.button !== 0) return;
-    input.mouseDown = false;
-    input.dragging = false;
+  consumeClick() {
+    const c = this.clicked;
+    this.clicked = false;
+    return c;
   }
 
-  function onMouseMove(e) {
-    if (input.locked) {
-      input.mouseDX += e.movementX || 0;
-      input.mouseDY += e.movementY || 0;
-      return;
-    }
-    if (input.dragging && input.lastX !== undefined) {
-      input.mouseDX += e.clientX - input.lastX;
-      input.mouseDY += e.clientY - input.lastY;
-      input.lastX = e.clientX;
-      input.lastY = e.clientY;
-    }
+  takeLook() {
+    const yaw = this.yawDelta;
+    const pitch = this.pitchDelta;
+    this.yawDelta = 0;
+    this.pitchDelta = 0;
+    return { yaw, pitch };
   }
 
-  function onWheel(e) {
-    input.wheel += Math.sign(e.deltaY);
-    e.preventDefault();
+  // WASD as a -1..1 pair, screen-relative (forward = -Z on the map).
+  axes() {
+    let x = 0;
+    let y = 0;
+    if (this.held('KeyA') || this.held('ArrowLeft')) x -= 1;
+    if (this.held('KeyD') || this.held('ArrowRight')) x += 1;
+    if (this.held('KeyW') || this.held('ArrowUp')) y += 1;
+    if (this.held('KeyS') || this.held('ArrowDown')) y -= 1;
+    return { x, y };
   }
 
-  function onLockChange() {
-    input.locked = document.pointerLockElement === canvas;
+  endFrame() {
+    this.pressed.clear();
   }
 
-  function onBlur() {
-    input.keys.clear();
-    input.pressed.clear();
-    input.mouseDown = false;
-    input.dragging = false;
+  // A drag only counts as a shot when the pointer barely moved, so
+  // orbiting the camera never fires the pistol by accident.
+  consumeShot() {
+    if (!this.clicked) return false;
+    this.clicked = false;
+    return true;
   }
-
-  window.addEventListener('keydown', onKeyDown);
-  window.addEventListener('keyup', onKeyUp);
-  window.addEventListener('blur', onBlur);
-  canvas.addEventListener('mousedown', onMouseDown);
-  window.addEventListener('mouseup', onMouseUp);
-  window.addEventListener('mousemove', onMouseMove);
-  canvas.addEventListener('wheel', onWheel, { passive: false });
-  document.addEventListener('pointerlockchange', onLockChange);
-  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
-
-  input.requestLock = function requestLock() {
-    try {
-      if (document.pointerLockElement !== canvas) canvas.requestPointerLock();
-    } catch (err) {
-      // Pointer lock is optional: drag-to-orbit always works.
-    }
-  };
-
-  input.releaseLock = function releaseLock() {
-    try {
-      if (document.pointerLockElement) document.exitPointerLock();
-    } catch (err) { /* already unlocked */ }
-  };
-
-  // True only on the frame the key went down.
-  input.wasPressed = function wasPressed(action) {
-    return input.pressed.has(action);
-  };
-
-  // Call at the end of each frame: edges and deltas live for one frame.
-  input.endFrame = function endFrame() {
-    input.pressed.clear();
-    input.mouseDX = 0;
-    input.mouseDY = 0;
-    input.wheel = 0;
-    input.clicked = false;
-  };
-
-  return input;
 }

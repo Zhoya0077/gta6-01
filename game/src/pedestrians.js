@@ -1,166 +1,165 @@
-// Pedestrians: Solmarina locals strolling the sidewalks, turning at
-// corners, and fleeing when crime erupts or a car bears down on them.
+// Pedestrians: sidewalk wanderers who stop to chat, cross at corners,
+// and run when a crime happens nearby. A fleeing crowd is the city's
+// fastest way of telling the player the heat just went up.
 
-import { G, ROAD_LINES, on } from './state.js';
-import { clamp, angleLerp, resolveColliders, dist2, pick } from './util.js';
-import { clampToWorld } from './city.js';
-import { makeHumanoid, animateHumanoid } from './characters.js';
+import { G, WORLD_HALF } from './state.js';
+import { makeFigure, animateFigure } from './characters.js';
+import { makeRng } from './util.js';
 
-const PED_COUNT = 16;
-const SIDEWALK_OFF = 8.5;
-
-function sidewalkPoint(rng) {
-  const vertical = rng() < 0.5;
-  const line = pick(rng, ROAD_LINES);
-  const along = -240 + rng() * 480;
-  const side = rng() < 0.5 ? -1 : 1;
-  return {
-    x: vertical ? line + side * SIDEWALK_OFF : along,
-    z: vertical ? along : line + side * SIDEWALK_OFF,
-    axis: vertical ? 'z' : 'x',
-    dir: rng() < 0.5 ? 1 : -1,
-    line,
-    side,
-  };
-}
-
-export function spawnPedestrians(scene, rng) {
-  for (let i = 0; i < PED_COUNT; i++) {
-    const spot = sidewalkPoint(rng);
-    const fig = makeHumanoid({ rng });
-    fig.group.position.set(spot.x, 0, spot.z);
+export function spawnPeds(scene, count, seed, city) {
+  const rng = makeRng(seed + 77);
+  const peds = [];
+  for (let i = 0; i < count; i++) {
+    const fig = makeFigure({ rng: rng.next });
+    let x = 0;
+    let z = 0;
+    for (let tries = 0; tries < 20; tries++) {
+      x = rng.range(-WORLD_HALF + 20, 240);
+      z = rng.range(-WORLD_HALF + 20, WORLD_HALF - 20);
+      const res = city.collideCircle(x, z, 0.6);
+      if (!res.hit && !city.isOnRoad(x, z)) break;
+    }
+    fig.group.position.set(x, 0, z);
     scene.add(fig.group);
     const ped = {
       fig,
-      heading: spot.axis === 'z' ? (spot.dir > 0 ? 0 : Math.PI) : (spot.dir > 0 ? Math.PI / 2 : -Math.PI / 2),
-      axis: spot.axis,
-      dir: spot.dir,
-      line: spot.line,
-      side: spot.side,
-      speed: 2 + rng() * 1.4,
-      walkPhase: rng() * 10,
-      health: 30,
-      dead: false,
-      deadTimer: 0,
+      heading: rng.range(0, Math.PI * 2),
+      speed: 0,
+      state: 'walk',
+      target: null,
+      idleTimer: rng.range(0, 4),
       fleeTimer: 0,
-      fleeX: 0,
-      fleeZ: 0,
-      lastJunction: null,
-      speedNorm: 0.5,
+      health: 30,
+      down: false,
+      downTimer: 0,
     };
-    fig.group.userData.entity = { kind: 'ped', ref: ped };
     G.peds.push(ped);
+    peds.push(ped);
   }
-
-  // A crime nearby sends every ped in earshot running.
-  on('crime', (data) => {
-    for (const ped of G.peds) {
-      if (ped.dead) continue;
-      const d = dist2(ped.fig.group.position.x, ped.fig.group.position.z, data.x, data.z);
-      if (d < 34) {
-        ped.fleeTimer = 3 + Math.random() * 2;
-        ped.fleeX = ped.fig.group.position.x - data.x;
-        ped.fleeZ = ped.fig.group.position.z - data.z;
-      }
-    }
-  });
+  return peds;
 }
 
-export function damagePed(ped, amount, sourceX, sourceZ) {
-  if (ped.dead) return;
-  ped.health -= amount;
-  ped.fleeTimer = 4;
-  ped.fleeX = ped.fig.group.position.x - sourceX;
-  ped.fleeZ = ped.fig.group.position.z - sourceZ;
-  if (ped.health <= 0) {
-    ped.dead = true;
-    ped.deadTimer = 0;
-    ped.fig.group.rotation.x = Math.PI / 2;
-    ped.fig.group.position.y = 0.3;
+function pickTarget(ped, city, nextFn) {
+  // nextFn is a plain () => [0,1) function (Math.random or an RNG's
+  // next), NOT the makeRng helper object — calling .range on it threw
+  // every frame once the first pedestrian finished idling.
+  const next = typeof nextFn === 'function' ? nextFn : Math.random;
+  for (let tries = 0; tries < 12; tries++) {
+    const x = ped.fig.group.position.x + (next() * 110 - 55);
+    const z = ped.fig.group.position.z + (next() * 110 - 55);
+    if (Math.abs(x) > WORLD_HALF - 15 || Math.abs(z) > WORLD_HALF - 15) continue;
+    if (x > 250) continue;
+    const res = city.collideCircle(x, z, 0.6);
+    if (res.hit) continue;
+    return { x: res.x, z: res.z };
   }
+  return null;
 }
 
-export function updatePedestrians(dt) {
-  const playerPos = G.player ? G.player.position() : null;
+export function updatePeds(dt, city, rngFn) {
+  const playerPos = G.player ? G.player.pos() : { x: 0, z: 0 };
+  const crime = G.lastCrimePos;
+  const crimeFresh = crime && G.time - G.lastCrimeTime < 6;
   for (const ped of G.peds) {
-    const pos = ped.fig.group.position;
-    if (ped.dead) {
-      ped.deadTimer += dt;
-      if (ped.deadTimer > 12) {
-        // The city cleans up: respawn the ped far from the player.
-        const spot = sidewalkPoint(G.rng);
-        pos.set(spot.x, 0, spot.z);
-        ped.fig.group.rotation.x = 0;
+    const p = ped.fig.group.position;
+    if (ped.down) {
+      ped.downTimer -= dt;
+      ped.fig.group.rotation.x = Math.min(Math.PI / 2, ped.fig.group.rotation.x + dt * 4);
+      if (ped.downTimer <= 0) {
+        ped.down = false;
         ped.health = 30;
-        ped.dead = false;
-        ped.axis = spot.axis;
-        ped.dir = spot.dir;
-        ped.line = spot.line;
-        ped.side = spot.side;
-        ped.heading = spot.axis === 'z' ? (spot.dir > 0 ? 0 : Math.PI) : (spot.dir > 0 ? Math.PI / 2 : -Math.PI / 2);
+        ped.fig.group.rotation.x = 0;
+        ped.state = 'flee';
+        ped.fleeTimer = 4;
       }
       continue;
     }
-
-    // A fast car closing in also triggers a flee.
-    if (ped.fleeTimer <= 0 && playerPos) {
-      for (const car of G.cars) {
-        if (Math.abs(car.speed) < 8) continue;
-        const d = dist2(pos.x, pos.z, car.mesh.position.x, car.mesh.position.z);
-        if (d < 8) {
-          ped.fleeTimer = 2.5;
-          ped.fleeX = pos.x - car.mesh.position.x;
-          ped.fleeZ = pos.z - car.mesh.position.z;
-          break;
-        }
-      }
+    // Flee triggers: fresh crime nearby, high wanted + player close,
+    // or a car bearing down on the sidewalk.
+    let flee = ped.fleeTimer > 0;
+    if (crimeFresh && Math.hypot(p.x - crime.x, p.z - crime.z) < 42) flee = true;
+    if (G.wanted >= 2 && Math.hypot(p.x - playerPos.x, p.z - playerPos.z) < 20) flee = true;
+    if (flee) {
+      ped.state = 'flee';
+      ped.fleeTimer = Math.max(ped.fleeTimer, 2.5);
     }
+    ped.fleeTimer = Math.max(0, ped.fleeTimer - dt);
 
-    if (ped.fleeTimer > 0) {
-      ped.fleeTimer -= dt;
-      const len = Math.hypot(ped.fleeX, ped.fleeZ) || 1;
-      const targetHeading = Math.atan2(ped.fleeX / len, ped.fleeZ / len);
-      ped.heading = angleLerp(ped.heading, targetHeading, 1 - Math.exp(-8 * dt));
-      pos.x += Math.sin(ped.heading) * 7 * dt;
-      pos.z += Math.cos(ped.heading) * 7 * dt;
-      ped.walkPhase += 7 * dt * 1.9;
-      ped.speedNorm = 1;
+    if (ped.state === 'flee') {
+      // Run away from the threat, preferring open ground.
+      const awayFrom = crimeFresh ? crime : playerPos;
+      const away = Math.atan2(p.x - awayFrom.x, p.z - awayFrom.z);
+      ped.heading += (away - ped.heading) * Math.min(1, dt * 4);
+      // Normalise heading drift.
+      while (ped.heading > Math.PI) ped.heading -= Math.PI * 2;
+      while (ped.heading < -Math.PI) ped.heading += Math.PI * 2;
+      ped.speed = 6.4;
+      let nx = p.x + Math.sin(ped.heading) * ped.speed * dt;
+      let nz = p.z + Math.cos(ped.heading) * ped.speed * dt;
+      const res = city.collideCircle(nx, nz, 0.5);
+      if (res.hit) {
+        ped.heading += Math.PI / 2;
+        nx = p.x;
+        nz = p.z;
+      }
+      p.x = nx;
+      p.z = nz;
+      if (ped.fleeTimer <= 0) {
+        ped.state = 'walk';
+        ped.target = null;
+      }
+      animateFigure(ped.fig, ped.speed, dt, {});
     } else {
-      // Stroll the sidewalk; turn at intersections sometimes.
-      const along = ped.axis === 'z' ? pos.z : pos.x;
-      for (const cross of ROAD_LINES) {
-        if (Math.abs(along - cross) < 2 && ped.lastJunction !== cross) {
-          ped.lastJunction = cross;
-          if (G.rng() < 0.3) {
-            const newAxis = ped.axis === 'z' ? 'x' : 'z';
-            ped.axis = newAxis;
-            ped.dir = G.rng() < 0.5 ? 1 : -1;
-            ped.line = cross;
-            ped.side = G.rng() < 0.5 ? -1 : 1;
-          }
-          break;
+      ped.idleTimer -= dt;
+      if (!ped.target) {
+        if (ped.idleTimer <= 0) {
+          ped.target = pickTarget(ped, city, rngFn || Math.random);
+          if (!ped.target) ped.idleTimer = 2;
         }
-        if (Math.abs(along - cross) > 12 && ped.lastJunction === cross) ped.lastJunction = null;
+        ped.speed = 0;
+        animateFigure(ped.fig, 0, dt, {});
+      } else {
+        const dx = ped.target.x - p.x;
+        const dz = ped.target.z - p.z;
+        const d = Math.hypot(dx, dz);
+        if (d < 1.5) {
+          ped.target = null;
+          ped.idleTimer = 1 + Math.random() * 5;
+          ped.speed = 0;
+        } else {
+          const want = Math.atan2(dx, dz);
+          let dh = want - ped.heading;
+          while (dh > Math.PI) dh -= Math.PI * 2;
+          while (dh < -Math.PI) dh += Math.PI * 2;
+          ped.heading += Math.max(-3 * dt, Math.min(3 * dt, dh));
+          ped.speed = 1.7;
+          let nx = p.x + Math.sin(ped.heading) * ped.speed * dt;
+          let nz = p.z + Math.cos(ped.heading) * ped.speed * dt;
+          const res = city.collideCircle(nx, nz, 0.5);
+          p.x = res.x;
+          p.z = res.z;
+        }
+        animateFigure(ped.fig, ped.speed, dt, {});
       }
-      const targetHeading = ped.axis === 'z'
-        ? (ped.dir > 0 ? 0 : Math.PI)
-        : (ped.dir > 0 ? Math.PI / 2 : -Math.PI / 2);
-      ped.heading = angleLerp(ped.heading, targetHeading, 1 - Math.exp(-4 * dt));
-      pos.x += Math.sin(ped.heading) * ped.speed * dt;
-      pos.z += Math.cos(ped.heading) * ped.speed * dt;
-      // Drift back onto the sidewalk line.
-      const target = ped.axis === 'z' ? ped.line + ped.side * SIDEWALK_OFF : ped.line + ped.side * SIDEWALK_OFF;
-      if (ped.axis === 'z') pos.x += clamp(target - pos.x, -1, 1) * dt * 1.5;
-      else pos.z += clamp(target - pos.z, -1, 1) * dt * 1.5;
-      ped.walkPhase += ped.speed * dt * 1.7;
-      ped.speedNorm = 0.5;
-      // Turn around at the map edge.
-      if (Math.abs(pos.x) > 250 || Math.abs(pos.z) > 250) ped.dir *= -1;
     }
-
-    resolveColliders(pos, 0.45, G.city.colliders);
-    clampToWorld(pos, 0.45);
     ped.fig.group.rotation.y = ped.heading;
-    animateHumanoid(ped.fig, ped.walkPhase, ped.speedNorm, 0);
   }
+}
+
+export function knockDownPed(ped) {
+  ped.down = true;
+  ped.downTimer = 6;
+  ped.health = 0;
+}
+
+// Nearest pedestrian to a point, for punch and shot resolution.
+export function nearestPed(x, z, maxDist) {
+  let best = null;
+  let bestD = maxDist;
+  for (const ped of G.peds) {
+    if (ped.down) continue;
+    const d = Math.hypot(ped.fig.group.position.x - x, ped.fig.group.position.z - z);
+    if (d < bestD) { bestD = d; best = ped; }
+  }
+  return best;
 }
