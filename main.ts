@@ -1,17 +1,19 @@
-// SOLMARINA for gta6-01 (Node 22, standard library only). This folder's
-// game/ directory is the whole entry: static files a desktop browser can
-// open offline — game/index.html plus ES modules, with three.js vendored
-// as minified builds under game/vendor/ and no network request anywhere.
-// Rebuilt clean in a fresh session: every game source file was authored
-// here, and the four screenshots are fresh renders of this build.
-// This program hands that entry in. It copies game/ and screenshots/ from
-// next to this file into /output and writes /output/dossier.json, the
-// summary the judge reads, using the vendored make.fun library. The game
-// itself is an invented open-world crime story: a procedural coastal city
-// to cross on foot and by car, traffic and pedestrians, cars to steal, a
-// five-star wanted level with pursuing police, five story missions,
-// combat, a HUD with a live minimap, a start screen, and saves kept in
-// localStorage.
+// SOLMARINA for gta6-01 (Node 22, standard library only), written
+// afresh in this session for the second clean rebuild. The entry is
+// this folder's game/ directory: static files a desktop browser opens
+// offline — game/index.html and its ES modules, three.js vendored as
+// minified builds under game/vendor/, no network request anywhere.
+// The four screenshots are fresh renders of this build, taken through
+// the game's own shot presets. This program hands the entry in: it
+// copies game/ and screenshots/ from beside this file into /output and
+// writes /output/dossier.json, the summary the judge reads, using the
+// vendored make.fun library. The game is an invented open-world crime
+// story — a procedural coastal city to cross on foot and by car,
+// traffic and pedestrians, cars to steal, a five-star wanted level
+// with pursuing police, five story missions, combat, a HUD with a live
+// minimap, a start screen, and saves kept in localStorage. The program
+// below is the kit's plumbing shape with this entry's header: copy the
+// two folders, write the dossier, nothing more.
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
